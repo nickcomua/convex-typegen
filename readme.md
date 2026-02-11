@@ -1,78 +1,123 @@
 # convex-typegen
 
-A blazing fast Rust type generator for [ConvexDB](https://www.convex.dev) schemas and functions.
+> Fork of [JamalLyons/convex-typegen](https://github.com/JamalLyons/convex-typegen) with extended function support.
 
-## Features
+Generate Rust types and a typed API trait from [Convex](https://www.convex.dev) schema and function files at build time using [oxc](https://oxc.rs).
 
-- 🚀 **Blazing Fast**: Efficient AST parsing and type generation using oxc
-- 🔄 **Auto-regeneration**: Types automatically update when schema or function files change
-- 🛠️ **Complete Type System**: 
-  - Full schema type generation (tables, columns, unions)
-  - Function argument types for queries, mutations, and actions
-  - Support for all Convex types (arrays, objects, records, literals)
-  - Proper handling of optional fields and complex types
-- 🔒 **Type Safety**: 
-  - Compile-time type checking
-  - Automatic serialization/deserialization
-  - Zero runtime overhead
-- 🎨 **Developer Experience**: 
-  - Clean, idiomatic Rust code generation
-  - Smart function path resolution (e.g., "auth:login")
-  - Detailed documentation for generated types
+## Fork changes
 
-## Quick Start
+- **Cross-file identifier resolution** — exported `const` validators in `schema.ts` are resolved when used in function args
+- **`ConvexApi` trait generation** — typed extension trait on `ConvexClient` with `subscribe_*` / `query_*` / `{file}_{fn}()` methods
+- **Tagged union support** — objects with a `type` discriminator generate `#[serde(tag = "type")]` enums
+- **Integration test suite** — end-to-end tests using testcontainers with a real Convex backend
 
-1. Add dependencies using cargo:
+## Installation
 
-```bash
-cargo add convex-typegen serde serde_json
-cargo add --build convex-typegen
+Add as a **build dependency** via git:
+
+```toml
+[build-dependencies]
+convex-typegen = { git = "https://github.com/nickcomua/convex-typegen" }
 ```
 
-2. Add the following to your `build.rs` file:
+You also need these runtime dependencies:
+
+```toml
+[dependencies]
+convex = "0.10.2"
+serde = { version = ">=1, <1.0.224", features = ["derive"] }
+serde_json = "1"
+```
+
+> **Note:** serde must be pinned to `<1.0.224` because oxc 0.46.0 uses `serde::__private` which was removed in that version.
+
+## Usage
+
+Create a `build.rs` that runs the generator:
 
 ```rust
-use convex_typegen::generate;
+use convex_typegen::{generate, Configuration};
 
 fn main() {
-    generate().unwrap();
+    println!("cargo:rerun-if-changed=convex/schema.ts");
+
+    // Auto-discover function files in convex/
+    let mut function_paths: Vec<std::path::PathBuf> = std::fs::read_dir("convex")
+        .expect("convex/ directory must exist")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            if name.ends_with(".ts") && name != "schema.ts" && !name.starts_with('_') {
+                println!("cargo:rerun-if-changed=convex/{}", name);
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    function_paths.sort();
+
+    let config = Configuration {
+        schema_path: std::path::PathBuf::from("convex/schema.ts"),
+        out_file: format!("{}/convex_types.rs", std::env::var("OUT_DIR").unwrap()),
+        function_paths,
+    };
+
+    generate(config).expect("convex-typegen failed");
 }
 ```
 
-3. Run `cargo build` to generate the types.
+Then include the generated types in your code:
 
-You can watch a demo video [here](https://youtu.be/42-Ihov48AU) to learn more.
+```rust
+include!(concat!(env!("OUT_DIR"), "/convex_types.rs"));
+```
 
-## Supported Types
+Run `cargo build` — types regenerate automatically when schema or function files change.
 
-- **Basic Types**: `string`, `number`, `boolean`, `null`, `int64`, `bytes`
-- **Complex Types**: `array`, `object`, `record`, `union`, `optional`
-- **Special Types**: `any`, `literal`, `id`
-- **Custom Types**: Automatic enum generation for union types
+## What gets generated
 
-## Acknowledgments
+| Convex type | Rust type |
+|---|---|
+| `v.string()` | `String` |
+| `v.number()` | `f64` |
+| `v.boolean()` | `bool` |
+| `v.int64()` | `i64` |
+| `v.bytes()` | `Vec<u8>` |
+| `v.null()` | `()` |
+| `v.id("table")` | `String` |
+| `v.array(T)` | `Vec<T>` |
+| `v.object({...})` | Named struct |
+| `v.record(K, V)` | `HashMap<K, V>` |
+| `v.union(T, v.null())` | `Option<T>` |
+| `v.union(literals...)` | `enum` (Copy) |
+| `v.union(tagged objects...)` | `#[serde(tag = "type")] enum` |
+| `v.optional(T)` | `Option<T>` |
+| `v.any()` | `serde_json::Value` |
 
-- Built for use with [ConvexDB](https://convex.dev)
-- Powered by [oxc](https://github.com/oxc-project/oxc) for TypeScript parsing
+For each query/mutation/action, the generator also produces:
+- **Arg structs** (e.g. `ChatsGetArgs`) with `From<BTreeMap<String, JsonValue>>`
+- **`ConvexApi` trait** on `ConvexClient` with typed methods
 
-## Related Projects
+## Testing
 
-- [convex rust sdk](https://docs.rs/convex/latest/convex/) - Official Rust client for ConvexDB
+Unit tests (no Docker required):
 
-## Contributing
+```bash
+cargo test
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first.
+Integration tests (requires Docker + Node.js):
 
-## Versioning
+```bash
+cargo test --test integration_test -- --ignored --nocapture
+```
 
-This project follows [Semantic Versioning](https://semver.org/) (SemVer) to manage releases. The versioning format is:
+## Example
 
-- **MAJOR** version is incremented for incompatible API changes or breaking changes.
-- **MINOR** version is incremented for adding new features in a backward-compatible manner.
-- **PATCH** version is incremented for backward-compatible bug fixes or minor changes that don't add new features.
-
-For more details, refer to the [CHANGELOG](CHANGELOG.md).
+See [examples/basic/](examples/basic/) for a complete working project.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT - see [LICENSE](LICENSE).

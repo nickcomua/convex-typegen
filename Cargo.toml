@@ -7,10 +7,9 @@ license = "MIT"
 edition = "2021"
 
 # Documentation and repository links
-documentation = "https://docs.rs/convex-typegen"
-repository = "https://github.com/JamalLyons/convex-typegen"
-homepage = "https://github.com/JamalLyons/convex-typegen"
-readme = "readme.md"
+repository = "https://github.com/nickcomua/convex-typegen"
+homepage = "https://github.com/nickcomua/convex-typegen"
+readme = "README.md"
 
 # Metadata
 categories = ["development-tools", "database", "web-programming"]
@@ -20,13 +19,19 @@ keywords = ["convex", "rust", "typegen", "database", "types"]
 # rust-version = "1.70.0"
 
 [dependencies]
-convex = "0.9.0"
+convex = "0.10.2"
 oxc = { version = "0.46.0", features = ["semantic", "serialize"], default-features = false}
-serde = { version = "1.0.215", features = ["std", "derive"], default-features = false }
-serde_json = "1.0.132"
+serde = { version = ">=1, <1.0.224", features = ["std", "derive"], default-features = false }
+serde_json = "1"
 
 [dev-dependencies]
 tempdir = "0.3"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+testcontainers = "0.23"
+futures = "0.3"
+futures-core = "0.3"
+basic = { path = "examples/basic" }
 
 [profile.dev]
 opt-level = 1      # Make debug builds run faster

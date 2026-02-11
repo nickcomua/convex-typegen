@@ -2,18 +2,33 @@ use convex_typegen::{generate, Configuration};
 
 fn main()
 {
-    // Rebuild if the schema or games files change
     println!("cargo:rerun-if-changed=convex/schema.ts");
-    println!("cargo:rerun-if-changed=convex/games.ts");
+
+    // Collect function files (all .ts files except schema and _generated)
+    let mut function_paths: Vec<std::path::PathBuf> = std::fs::read_dir("convex")
+        .expect("convex/ directory must exist")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            if name.ends_with(".ts") && name != "schema.ts" && !name.starts_with('_') {
+                println!("cargo:rerun-if-changed=convex/{}", name);
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
+    function_paths.sort();
 
     let config = Configuration {
-        function_paths: vec![std::path::PathBuf::from("convex/games.ts")],
-        ..Default::default()
+        schema_path: std::path::PathBuf::from("convex/schema.ts"),
+        out_file: format!("{}/convex_types.rs", std::env::var("OUT_DIR").unwrap()),
+        function_paths,
     };
 
-    // Generate the types
     match generate(config) {
         Ok(_) => {}
-        Err(e) => panic!("Typegen failed: {}", e),
-    };
+        Err(e) => panic!("convex-typegen failed: {}", e),
+    }
 }

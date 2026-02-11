@@ -55,6 +55,7 @@ pub(crate) struct ConvexFunction
 {
     pub(crate) name: String,
     pub(crate) params: Vec<ConvexFunctionParam>,
+    pub(crate) return_type: Option<JsonValue>,
     pub(crate) type_: String,
     pub(crate) file_name: String,
 }
@@ -118,6 +119,10 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
             details: "Missing body array".to_string(),
         })?;
 
+    // Build a map of top-level const declarations for resolving references.
+    // This handles patterns like: export const myValidator = v.union(...);
+    let bindings = collect_top_level_bindings(body);
+
     // Find the defineSchema call
     let define_schema = find_define_schema(body).ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
         context: context.to_string(),
@@ -153,13 +158,20 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
                 details: "Invalid table name".to_string(),
             })?;
 
-        // Get the defineTable call arguments
+        // Walk through method chains like defineTable({...}).index(...).index(...)
+        // to find the defineTable call and its arguments.
+        let define_table_call = find_define_table_call(&table_prop["value"])
+            .ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
+                context: context.to_string(),
+                details: format!("Could not find defineTable call for table '{}'", table_name),
+            })?;
+
         let define_table_args =
-            table_prop["value"]["arguments"]
+            define_table_call["arguments"]
                 .as_array()
                 .ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
                     context: context.to_string(),
-                    details: "Invalid table definition".to_string(),
+                    details: format!("Invalid defineTable arguments for table '{}'", table_name),
                 })?;
 
         // Get the first argument which contains column definitions
@@ -184,9 +196,12 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
                         details: "Invalid column name".to_string(),
                     })?;
 
+            // Resolve identifier references (e.g. `status: clientStatus`)
+            let resolved_prop = resolve_column_prop(column_prop, &bindings);
+
             // Get column type by looking at the property chain
             let mut context = TypeContext::new(context.to_string());
-            let column_type = extract_column_type(column_prop, &mut context)?;
+            let column_type = extract_column_type(&resolved_prop, &mut context)?;
 
             columns.push(ConvexColumn {
                 name: column_name.to_string(),
@@ -201,6 +216,149 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
     }
 
     Ok(ConvexSchema { tables })
+}
+
+/// Extract top-level bindings from a schema AST for cross-file resolution.
+///
+/// Returns a map of binding name → AST value node for each `export const name = value;`
+/// declaration in the schema. These bindings are used to resolve identifiers in
+/// function files (e.g., `returns: clientDoc` referencing a schema export).
+pub fn extract_schema_bindings(ast: &JsonValue) -> Result<HashMap<String, JsonValue>, ConvexTypeGeneratorError>
+{
+    let body = ast["body"]
+        .as_array()
+        .ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
+            context: "extract_bindings".to_string(),
+            details: "Missing body array".to_string(),
+        })?;
+    Ok(collect_top_level_bindings(body))
+}
+
+/// Recursively resolve all Identifier nodes in an AST tree using the provided bindings.
+///
+/// This handles nested references like `clientDoc` containing `clientStatus`.
+/// A depth limit of 20 prevents infinite loops from accidental cycles.
+fn resolve_deep(node: &JsonValue, bindings: &HashMap<String, JsonValue>, depth: usize) -> JsonValue
+{
+    if depth > 20 {
+        return node.clone();
+    }
+
+    // If this node is an Identifier, resolve it from bindings
+    if node["type"].as_str() == Some("Identifier") {
+        if let Some(name) = node["name"].as_str() {
+            if let Some(resolved) = bindings.get(name) {
+                return resolve_deep(resolved, bindings, depth + 1);
+            }
+        }
+        return node.clone();
+    }
+
+    // Recursively resolve in JSON objects and arrays
+    match node {
+        JsonValue::Object(map) => {
+            // If this looks like an AST property node (has "key" + "value" fields),
+            // don't resolve identifiers inside the "key" — those are structural names,
+            // not value references. This prevents shorthand `chatType` from having its
+            // key resolved to the chatType validator AST.
+            let is_property_node = map.contains_key("key") && map.contains_key("value");
+            let new_map: serde_json::Map<String, JsonValue> = map
+                .iter()
+                .map(|(k, v)| {
+                    if is_property_node && k == "key" {
+                        (k.clone(), v.clone())
+                    } else {
+                        (k.clone(), resolve_deep(v, bindings, depth))
+                    }
+                })
+                .collect();
+            JsonValue::Object(new_map)
+        }
+        JsonValue::Array(arr) => {
+            JsonValue::Array(arr.iter().map(|v| resolve_deep(v, bindings, depth)).collect())
+        }
+        _ => node.clone(),
+    }
+}
+
+/// Walk a CallExpression chain to find the `defineTable(...)` call.
+/// Handles patterns like: defineTable({...}).index("name", [...]).index(...)
+fn find_define_table_call(node: &JsonValue) -> Option<&JsonValue>
+{
+    if node["type"].as_str() != Some("CallExpression") {
+        return None;
+    }
+
+    let callee = &node["callee"];
+
+    // Direct call: defineTable({...})
+    if callee["type"].as_str() == Some("Identifier") && callee["name"].as_str() == Some("defineTable") {
+        return Some(node);
+    }
+
+    // Method chain: something.index(...) — recurse into the object
+    if callee["type"].as_str() == Some("StaticMemberExpression")
+        || callee["type"].as_str() == Some("MemberExpression")
+    {
+        return find_define_table_call(&callee["object"]);
+    }
+
+    None
+}
+
+/// Collect top-level variable bindings (const declarations) from the AST body.
+/// This allows resolving references like `export const chatType = v.union(...)`.
+fn collect_top_level_bindings(body: &[JsonValue]) -> HashMap<String, JsonValue>
+{
+    let mut bindings = HashMap::new();
+
+    for node in body {
+        // Handle: export const foo = ...;
+        let declaration = if node["type"].as_str() == Some("ExportNamedDeclaration") {
+            node.get("declaration")
+        } else if node["type"].as_str() == Some("VariableDeclaration") {
+            Some(node)
+        } else {
+            None
+        };
+
+        if let Some(decl) = declaration {
+            if decl["type"].as_str() == Some("VariableDeclaration") {
+                if let Some(declarators) = decl["declarations"].as_array() {
+                    for declarator in declarators {
+                        if let Some(name) = declarator["id"]["name"].as_str() {
+                            if let Some(init) = declarator.get("init") {
+                                bindings.insert(name.to_string(), init.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    bindings
+}
+
+/// If a column's value is an Identifier (reference to a const), resolve it
+/// by substituting the referenced value from bindings.
+fn resolve_column_prop(column_prop: &JsonValue, bindings: &HashMap<String, JsonValue>) -> JsonValue
+{
+    let value = &column_prop["value"];
+
+    // Check if the value is a simple Identifier reference
+    if value["type"].as_str() == Some("Identifier") {
+        if let Some(name) = value["name"].as_str() {
+            if let Some(resolved) = bindings.get(name) {
+                // Return a new prop with the resolved value
+                let mut prop = column_prop.clone();
+                prop["value"] = resolved.clone();
+                return prop;
+            }
+        }
+    }
+
+    column_prop.clone()
 }
 
 /// Helper function to find the defineSchema call in the AST
@@ -345,9 +503,23 @@ fn extract_column_type(column_prop: &JsonValue, context: &mut TypeContext) -> Re
             type_obj.insert("variants".to_string(), JsonValue::Array(variants));
         }
         "literal" => {
-            // For literals, store the literal value
+            // Extract just the semantic value, stripping AST metadata (span, raw)
+            // so that two identical literals at different source positions compare equal.
             if let Some(literal_value) = args.first() {
-                type_obj.insert("value".to_string(), literal_value.clone());
+                if let Some(str_val) = literal_value["value"].as_str() {
+                    type_obj.insert("value".to_string(), JsonValue::String(str_val.to_string()));
+                } else {
+                    type_obj.insert("value".to_string(), literal_value.clone());
+                }
+            }
+        }
+        "id" => {
+            // Extract just the table name string, stripping AST metadata (span, raw)
+            // so that v.id("table") at different source positions compares equal.
+            if let Some(table_name_arg) = args.first() {
+                if let Some(table_name) = table_name_arg["value"].as_str() {
+                    type_obj.insert("tableName".to_string(), JsonValue::String(table_name.to_string()));
+                }
             }
         }
         // For other types, just include their arguments if any
@@ -367,7 +539,10 @@ fn extract_column_type(column_prop: &JsonValue, context: &mut TypeContext) -> Re
     Ok(type_value)
 }
 
-pub(crate) fn parse_function_ast(ast_map: HashMap<String, JsonValue>) -> Result<ConvexFunctions, ConvexTypeGeneratorError>
+pub(crate) fn parse_function_ast(
+    ast_map: HashMap<String, JsonValue>,
+    schema_bindings: &HashMap<String, JsonValue>,
+) -> Result<ConvexFunctions, ConvexTypeGeneratorError>
 {
     let mut functions = Vec::new();
 
@@ -413,12 +588,14 @@ pub(crate) fn parse_function_ast(ast_map: HashMap<String, JsonValue>) -> Result<
                                     // Get the first argument which contains the function config
                                     if let Some(args) = init["arguments"].as_array() {
                                         if let Some(config) = args.first() {
-                                            // Extract function parameters from the args property
-                                            let params = extract_function_params(config, &file_name)?;
+                                            // Extract function parameters and return type
+                                            let params = extract_function_params(config, &file_name, schema_bindings)?;
+                                            let return_type = extract_return_type(config, &file_name, schema_bindings)?;
 
                                             functions.push(ConvexFunction {
                                                 name: name.to_string(),
                                                 params,
+                                                return_type,
                                                 type_: fn_type.to_string(),
                                                 file_name: file_name.to_string(),
                                             });
@@ -437,8 +614,11 @@ pub(crate) fn parse_function_ast(ast_map: HashMap<String, JsonValue>) -> Result<
 }
 
 /// Helper function to extract function parameters from the function configuration
-fn extract_function_params(config: &JsonValue, file_name: &str)
-    -> Result<Vec<ConvexFunctionParam>, ConvexTypeGeneratorError>
+fn extract_function_params(
+    config: &JsonValue,
+    file_name: &str,
+    schema_bindings: &HashMap<String, JsonValue>,
+) -> Result<Vec<ConvexFunctionParam>, ConvexTypeGeneratorError>
 {
     let mut params = Vec::new();
 
@@ -474,9 +654,29 @@ fn extract_function_params(config: &JsonValue, file_name: &str)
                                     details: "Invalid parameter name".to_string(),
                                 })?;
 
-                        // Get parameter type using the same extraction logic as schema
-                        let mut context = TypeContext::new(format!("function_{}", param_name));
-                        let param_type = extract_column_type(arg_prop, &mut context)?;
+                        // Get parameter type using the same extraction logic as schema.
+                        // Try to resolve identifiers from schema bindings first,
+                        // fall back to serde_json::Value only if unresolvable.
+                        let param_type = if arg_prop["value"]["type"].as_str() == Some("Identifier") {
+                            if let Some(name) = arg_prop["value"]["name"].as_str() {
+                                if let Some(resolved) = schema_bindings.get(name) {
+                                    let resolved_value = resolve_deep(resolved, schema_bindings, 0);
+                                    let resolved_prop = json!({
+                                        "key": arg_prop["key"].clone(),
+                                        "value": resolved_value,
+                                    });
+                                    let mut context = TypeContext::new(format!("function_{}", param_name));
+                                    extract_column_type(&resolved_prop, &mut context)?
+                                } else {
+                                    json!({ "type": "any" })
+                                }
+                            } else {
+                                json!({ "type": "any" })
+                            }
+                        } else {
+                            let mut context = TypeContext::new(format!("function_{}", param_name));
+                            extract_column_type(arg_prop, &mut context)?
+                        };
 
                         params.push(ConvexFunctionParam {
                             name: param_name.to_string(),
@@ -490,6 +690,45 @@ fn extract_function_params(config: &JsonValue, file_name: &str)
     }
 
     Ok(params)
+}
+
+/// Helper function to extract the return type from the function configuration.
+///
+/// Looks for a `returns` property in the config object and parses its validator
+/// using the same `extract_column_type` logic used for args and schema columns.
+fn extract_return_type(
+    config: &JsonValue,
+    file_name: &str,
+    schema_bindings: &HashMap<String, JsonValue>,
+) -> Result<Option<JsonValue>, ConvexTypeGeneratorError>
+{
+    if let Some(properties) = config["properties"].as_array() {
+        for prop in properties {
+            if prop["key"]["name"].as_str() == Some("returns") {
+                // Handle Identifier (cross-file reference) → resolve from schema bindings
+                if prop["value"]["type"].as_str() == Some("Identifier") {
+                    if let Some(name) = prop["value"]["name"].as_str() {
+                        if let Some(resolved) = schema_bindings.get(name) {
+                            let resolved_value = resolve_deep(resolved, schema_bindings, 0);
+                            let resolved_prop = json!({
+                                "key": prop["key"].clone(),
+                                "value": resolved_value,
+                            });
+                            let mut context = TypeContext::new(format!("return_{}", file_name));
+                            return Ok(Some(extract_column_type(&resolved_prop, &mut context)?));
+                        }
+                    }
+                    return Ok(Some(json!({ "type": "any" })));
+                }
+                // Resolve any nested identifiers within the return type expression
+                let resolved_prop = resolve_deep(prop, schema_bindings, 0);
+                let mut context = TypeContext::new(format!("return_{}", file_name));
+                let return_type = extract_column_type(&resolved_prop, &mut context)?;
+                return Ok(Some(return_type));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Generates an AST from a source file.

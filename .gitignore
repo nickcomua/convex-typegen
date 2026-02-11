@@ -4,3 +4,7 @@
 *.toml~
 *.md~
 *.json~
+
+# IDE
+.idea/
+.vscode/
