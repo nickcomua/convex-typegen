@@ -102,16 +102,16 @@ For each query/mutation/action, the generator also produces:
 
 ## Testing
 
-Unit tests (no Docker required):
+Unit tests and codegen pipeline tests (no external dependencies):
 
 ```bash
 cargo test
 ```
 
-Integration tests (requires Docker + Node.js):
+End-to-end tests against a real Convex backend (requires Docker + Node.js):
 
 ```bash
-cargo test --test integration_test -- --ignored --nocapture
+cargo test --test integration_test -- --nocapture
 ```
 
 ## Example
