@@ -14,7 +14,8 @@
 //! ```rust,no_run
 //! use convex_typegen::{generate, Configuration};
 //!
-//! fn main() {
+//! fn main()
+//! {
 //!     let config = Configuration {
 //!         function_paths: vec![std::path::PathBuf::from("convex/myFunctions.ts")],
 //!         ..Default::default()

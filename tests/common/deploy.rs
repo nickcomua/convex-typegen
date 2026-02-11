@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 /// Deploy the example Convex functions to a running backend instance.
-pub async fn deploy_convex(convex_url: &str, admin_key: &str) -> anyhow::Result<()> {
+pub async fn deploy_convex(convex_url: &str, admin_key: &str) -> anyhow::Result<()>
+{
     let example_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/basic");
 
     // Ensure node_modules exist

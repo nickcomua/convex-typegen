@@ -12,7 +12,8 @@ use super::deploy::deploy_convex;
 static DOCKER_HOST_INIT: Once = Once::new();
 
 /// Shared test environment backed by a Convex Docker container.
-pub struct ConvexTestEnv {
+pub struct ConvexTestEnv
+{
     pub convex_url: String,
     // Held to keep the container alive via RAII.
     _container: ContainerAsync<GenericImage>,
@@ -23,18 +24,17 @@ static TEST_ENV: OnceCell<ConvexTestEnv> = OnceCell::const_new();
 /// Get or initialize the shared Convex test environment.
 ///
 /// The container is started once and reused across all tests in this binary.
-pub async fn get_test_env() -> &'static ConvexTestEnv {
+pub async fn get_test_env() -> &'static ConvexTestEnv
+{
     TEST_ENV
-        .get_or_init(|| async {
-            ConvexTestEnv::setup()
-                .await
-                .expect("Failed to setup Convex test environment")
-        })
+        .get_or_init(|| async { ConvexTestEnv::setup().await.expect("Failed to setup Convex test environment") })
         .await
 }
 
-impl ConvexTestEnv {
-    async fn setup() -> anyhow::Result<Self> {
+impl ConvexTestEnv
+{
+    async fn setup() -> anyhow::Result<Self>
+    {
         // Auto-detect Docker socket for OrbStack/Docker Desktop/standard Docker.
         // testcontainers (bollard) needs DOCKER_HOST to find the socket.
         // std::sync::Once guarantees this runs exactly once across all threads.
@@ -100,9 +100,7 @@ impl ConvexTestEnv {
 
         // Generate the admin key inside the container
         eprintln!("[test] Generating admin key...");
-        let mut exec_result = container
-            .exec(ExecCommand::new(["./generate_admin_key.sh"]))
-            .await?;
+        let mut exec_result = container.exec(ExecCommand::new(["./generate_admin_key.sh"])).await?;
         let stdout_bytes: Vec<u8> = exec_result.stdout_to_vec().await?;
         let stdout = String::from_utf8_lossy(&stdout_bytes);
         let admin_key = stdout
@@ -111,10 +109,7 @@ impl ConvexTestEnv {
             .last()
             .expect("No admin key in generate_admin_key.sh output")
             .to_string();
-        eprintln!(
-            "[test] Admin key: {}...",
-            &admin_key[..admin_key.len().min(30)]
-        );
+        eprintln!("[test] Admin key: {}...", &admin_key[..admin_key.len().min(30)]);
 
         // Deploy Convex functions from the example directory
         eprintln!("[test] Deploying example Convex functions...");

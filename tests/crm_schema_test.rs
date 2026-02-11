@@ -1,10 +1,11 @@
-use convex_typegen::{generate, Configuration};
 use std::path::PathBuf;
 
+use convex_typegen::{generate, Configuration};
+
 #[test]
-fn test_crm_chat_schema() {
-    let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../crm-chat/bins/convex-backend/convex/schema.ts");
+fn test_crm_chat_schema()
+{
+    let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crm-chat/bins/convex-backend/convex/schema.ts");
 
     if !schema_path.exists() {
         eprintln!("Skipping: schema file not found at {:?}", schema_path);

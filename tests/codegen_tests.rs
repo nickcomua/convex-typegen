@@ -10,7 +10,8 @@ use tempdir::TempDir;
 fn setup_test_env(
     schema_content: &str,
     function_files: Option<Vec<(&str, &str)>>,
-) -> (TempDir, PathBuf, PathBuf, Vec<PathBuf>) {
+) -> (TempDir, PathBuf, PathBuf, Vec<PathBuf>)
+{
     let temp_dir = TempDir::new("convex_codegen_test").expect("Failed to create temp directory");
     let schema_path = temp_dir.path().join("schema.ts");
     let output_path = temp_dir.path().join("types.rs");
@@ -30,12 +31,9 @@ fn setup_test_env(
 }
 
 /// Generate code and return the output string.
-fn generate_and_read(
-    schema_content: &str,
-    function_files: Option<Vec<(&str, &str)>>,
-) -> String {
-    let (_temp_dir, schema_path, output_path, function_paths) =
-        setup_test_env(schema_content, function_files);
+fn generate_and_read(schema_content: &str, function_files: Option<Vec<(&str, &str)>>) -> String
+{
+    let (_temp_dir, schema_path, output_path, function_paths) = setup_test_env(schema_content, function_files);
     let config = Configuration {
         schema_path,
         out_file: output_path.to_string_lossy().to_string(),
@@ -50,7 +48,8 @@ fn generate_and_read(
 // =============================================================================
 
 #[test]
-fn test_basic_types() {
+fn test_basic_types()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -88,7 +87,8 @@ fn test_basic_types() {
 // =============================================================================
 
 #[test]
-fn test_nested_object() {
+fn test_nested_object()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -110,14 +110,21 @@ fn test_nested_object() {
     );
 
     assert!(code.contains("pub struct UsersProfile"), "missing UsersProfile struct");
-    assert!(code.contains("pub struct UsersProfileAddress"), "missing nested UsersProfileAddress struct");
-    assert!(code.contains("pub address: UsersProfileAddress"), "profile should reference UsersProfileAddress");
+    assert!(
+        code.contains("pub struct UsersProfileAddress"),
+        "missing nested UsersProfileAddress struct"
+    );
+    assert!(
+        code.contains("pub address: UsersProfileAddress"),
+        "profile should reference UsersProfileAddress"
+    );
     assert!(code.contains("pub city: String"), "missing city field");
     assert!(code.contains("pub zip: String"), "missing zip field");
 }
 
 #[test]
-fn test_mixed_type_object() {
+fn test_mixed_type_object()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -141,11 +148,15 @@ fn test_mixed_type_object() {
     assert!(code.contains("pub count: f64"), "missing count (f64)");
     assert!(code.contains("pub active: bool"), "missing active (bool)");
     // Should NOT be a BTreeMap
-    assert!(!code.contains("BTreeMap<String, f64>"), "should not use BTreeMap for mixed-type objects");
+    assert!(
+        !code.contains("BTreeMap<String, f64>"),
+        "should not use BTreeMap for mixed-type objects"
+    );
 }
 
 #[test]
-fn test_empty_object() {
+fn test_empty_object()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -160,11 +171,15 @@ fn test_empty_object() {
         None,
     );
 
-    assert!(code.contains("pub data: serde_json::Value"), "empty object should be serde_json::Value");
+    assert!(
+        code.contains("pub data: serde_json::Value"),
+        "empty object should be serde_json::Value"
+    );
 }
 
 #[test]
-fn test_array_of_objects() {
+fn test_array_of_objects()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -187,7 +202,8 @@ fn test_array_of_objects() {
 }
 
 #[test]
-fn test_optional_object() {
+fn test_optional_object()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -206,11 +222,15 @@ fn test_optional_object() {
     );
 
     assert!(code.contains("pub struct UsersSettings"), "missing UsersSettings struct");
-    assert!(code.contains("pub settings: Option<UsersSettings>"), "should be Option<UsersSettings>");
+    assert!(
+        code.contains("pub settings: Option<UsersSettings>"),
+        "should be Option<UsersSettings>"
+    );
 }
 
 #[test]
-fn test_deeply_nested_objects() {
+fn test_deeply_nested_objects()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -233,13 +253,23 @@ fn test_deeply_nested_objects() {
 
     assert!(code.contains("pub struct DocsLevel1"), "missing DocsLevel1");
     assert!(code.contains("pub struct DocsLevel1Level2"), "missing DocsLevel1Level2");
-    assert!(code.contains("pub struct DocsLevel1Level2Level3"), "missing DocsLevel1Level2Level3");
-    assert!(code.contains("pub level2: DocsLevel1Level2"), "level1 should reference Level2");
-    assert!(code.contains("pub level3: DocsLevel1Level2Level3"), "level2 should reference Level3");
+    assert!(
+        code.contains("pub struct DocsLevel1Level2Level3"),
+        "missing DocsLevel1Level2Level3"
+    );
+    assert!(
+        code.contains("pub level2: DocsLevel1Level2"),
+        "level1 should reference Level2"
+    );
+    assert!(
+        code.contains("pub level3: DocsLevel1Level2Level3"),
+        "level2 should reference Level3"
+    );
 }
 
 #[test]
-fn test_object_in_array_in_optional() {
+fn test_object_in_array_in_optional()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -257,7 +287,10 @@ fn test_object_in_array_in_optional() {
         None,
     );
 
-    assert!(code.contains("pub struct EventsParticipants"), "missing EventsParticipants struct");
+    assert!(
+        code.contains("pub struct EventsParticipants"),
+        "missing EventsParticipants struct"
+    );
     assert!(
         code.contains("pub participants: Option<Vec<EventsParticipants>>"),
         "should be Option<Vec<EventsParticipants>>"
@@ -269,7 +302,8 @@ fn test_object_in_array_in_optional() {
 // =============================================================================
 
 #[test]
-fn test_literal_union() {
+fn test_literal_union()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -297,7 +331,8 @@ fn test_literal_union() {
 }
 
 #[test]
-fn test_tagged_union() {
+fn test_tagged_union()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -317,7 +352,10 @@ fn test_tagged_union() {
     );
 
     assert!(code.contains("pub enum EventsAction"), "missing EventsAction enum");
-    assert!(code.contains("#[serde(tag = \"type\")]"), "tagged union should have serde tag");
+    assert!(
+        code.contains("#[serde(tag = \"type\")]"),
+        "tagged union should have serde tag"
+    );
     assert!(code.contains("Click {"), "missing Click variant");
     assert!(code.contains("Scroll {"), "missing Scroll variant");
     assert!(code.contains("Keypress"), "missing Keypress variant");
@@ -326,7 +364,8 @@ fn test_tagged_union() {
 }
 
 #[test]
-fn test_nullable_union() {
+fn test_nullable_union()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -352,7 +391,8 @@ fn test_nullable_union() {
 // =============================================================================
 
 #[test]
-fn test_record_type() {
+fn test_record_type()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -378,7 +418,8 @@ fn test_record_type() {
 // =============================================================================
 
 #[test]
-fn test_int64_type() {
+fn test_int64_type()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -397,7 +438,8 @@ fn test_int64_type() {
 }
 
 #[test]
-fn test_bytes_type() {
+fn test_bytes_type()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -420,7 +462,8 @@ fn test_bytes_type() {
 // =============================================================================
 
 #[test]
-fn test_shared_validator_reference() {
+fn test_shared_validator_reference()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -450,7 +493,8 @@ fn test_shared_validator_reference() {
 // =============================================================================
 
 #[test]
-fn test_function_arg_tagged_union() {
+fn test_function_arg_tagged_union()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -486,7 +530,10 @@ fn test_function_arg_tagged_union() {
         code.contains("pub enum TasksCompleteResult"),
         "missing TasksCompleteResult tagged enum"
     );
-    assert!(code.contains("#[serde(tag = \"type\")]"), "tagged union should have serde tag");
+    assert!(
+        code.contains("#[serde(tag = \"type\")]"),
+        "tagged union should have serde tag"
+    );
     assert!(code.contains("Success {"), "missing Success variant");
     assert!(code.contains("Failed {"), "missing Failed variant");
     assert!(code.contains("value: f64"), "missing value field in Success");
@@ -498,7 +545,8 @@ fn test_function_arg_tagged_union() {
 // =============================================================================
 
 #[test]
-fn test_typed_query_return() {
+fn test_typed_query_return()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -533,7 +581,10 @@ fn test_typed_query_return() {
     );
 
     // TypedSubscription wrapper should be generated
-    assert!(code.contains("pub struct TypedSubscription<T>"), "missing TypedSubscription struct");
+    assert!(
+        code.contains("pub struct TypedSubscription<T>"),
+        "missing TypedSubscription struct"
+    );
     assert!(
         code.contains("impl<T: serde::de::DeserializeOwned> futures_core::Stream for TypedSubscription<T>"),
         "missing Stream impl"
@@ -553,7 +604,8 @@ fn test_typed_query_return() {
 }
 
 #[test]
-fn test_mutation_null_return() {
+fn test_mutation_null_return()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -587,7 +639,8 @@ fn test_mutation_null_return() {
 }
 
 #[test]
-fn test_untyped_query_no_return() {
+fn test_untyped_query_no_return()
+{
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";

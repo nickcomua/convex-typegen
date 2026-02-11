@@ -10,14 +10,17 @@ use crate::errors::ConvexTypeGeneratorError;
 // CodegenContext — accumulates inline struct/enum definitions during generation
 // =============================================================================
 
-struct CodegenContext<'a> {
+struct CodegenContext<'a>
+{
     tables: &'a [ConvexTable],
     extra_structs: Vec<String>,
     generated_names: HashSet<String>,
 }
 
-impl<'a> CodegenContext<'a> {
-    fn new(tables: &'a [ConvexTable]) -> Self {
+impl<'a> CodegenContext<'a>
+{
+    fn new(tables: &'a [ConvexTable]) -> Self
+    {
         CodegenContext {
             tables,
             extra_structs: Vec::new(),
@@ -27,7 +30,8 @@ impl<'a> CodegenContext<'a> {
 
     /// Register a struct/enum definition. Deduplicates by name.
     /// Returns the struct name for use as a type reference.
-    fn register_struct(&mut self, name: &str, code: &str) -> String {
+    fn register_struct(&mut self, name: &str, code: &str) -> String
+    {
         if !self.generated_names.contains(name) {
             self.generated_names.insert(name.to_string());
             self.extra_structs.push(code.to_string());
@@ -36,7 +40,8 @@ impl<'a> CodegenContext<'a> {
     }
 
     /// Drain accumulated struct definitions into a single string.
-    fn drain_extra_structs(&mut self) -> String {
+    fn drain_extra_structs(&mut self) -> String
+    {
         self.extra_structs.drain(..).collect()
     }
 }
@@ -45,10 +50,8 @@ impl<'a> CodegenContext<'a> {
 // Main entry point
 // =============================================================================
 
-pub(crate) fn generate_code(
-    path: &str,
-    data: (ConvexSchema, ConvexFunctions),
-) -> Result<(), ConvexTypeGeneratorError> {
+pub(crate) fn generate_code(path: &str, data: (ConvexSchema, ConvexFunctions)) -> Result<(), ConvexTypeGeneratorError>
+{
     let mut file = std::fs::File::create(path)?;
 
     file.set_len(0)?;
@@ -104,11 +107,8 @@ use serde::{Serialize, Deserialize};
 /// `naming_ctx` is used to name generated structs/enums (e.g. "UsersMetadata",
 /// "PhoneAuthRobotClaimAuthId"). When recursing into nested types, the context
 /// is extended with the field name.
-fn convex_type_to_rust_type(
-    data_type: &JsonValue,
-    naming_ctx: &str,
-    ctx: &mut CodegenContext,
-) -> String {
+fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut CodegenContext) -> String
+{
     let type_str = data_type["type"].as_str().unwrap_or("unknown");
 
     match type_str {
@@ -121,8 +121,7 @@ fn convex_type_to_rust_type(
         "any" => "serde_json::Value".to_string(),
 
         "array" => {
-            let element_type =
-                convex_type_to_rust_type(&data_type["elements"], naming_ctx, ctx);
+            let element_type = convex_type_to_rust_type(&data_type["elements"], naming_ctx, ctx);
             format!("Vec<{}>", element_type)
         }
 
@@ -141,16 +140,13 @@ fn convex_type_to_rust_type(
                 struct_code += "#[derive(Debug, Clone, Serialize, Deserialize)]\n";
                 struct_code += &format!("pub struct {} {{\n", struct_name);
                 for (field_name, field_type) in props {
-                    let nested_ctx =
-                        format!("{}{}", struct_name, capitalize_first_letter(field_name));
+                    let nested_ctx = format!("{}{}", struct_name, capitalize_first_letter(field_name));
                     let rust_type = convex_type_to_rust_type(field_type, &nested_ctx, ctx);
                     let rust_name = to_snake_case(field_name);
                     if rust_name != *field_name {
-                        struct_code +=
-                            &format!("    #[serde(rename = \"{}\")]\n", field_name);
+                        struct_code += &format!("    #[serde(rename = \"{}\")]\n", field_name);
                     }
-                    struct_code +=
-                        &format!("    pub {}: {},\n", rust_name, rust_type);
+                    struct_code += &format!("    pub {}: {},\n", rust_name, rust_type);
                 }
                 struct_code += "}\n\n";
                 ctx.register_struct(&struct_name, &struct_code)
@@ -160,30 +156,21 @@ fn convex_type_to_rust_type(
         }
 
         "record" => {
-            let key_type =
-                convex_type_to_rust_type(&data_type["keyType"], naming_ctx, ctx);
-            let value_type =
-                convex_type_to_rust_type(&data_type["valueType"], naming_ctx, ctx);
+            let key_type = convex_type_to_rust_type(&data_type["keyType"], naming_ctx, ctx);
+            let value_type = convex_type_to_rust_type(&data_type["valueType"], naming_ctx, ctx);
             format!("std::collections::HashMap<{}, {}>", key_type, value_type)
         }
 
         "optional" => {
-            let inner_type =
-                convex_type_to_rust_type(&data_type["inner"], naming_ctx, ctx);
+            let inner_type = convex_type_to_rust_type(&data_type["inner"], naming_ctx, ctx);
             format!("Option<{}>", inner_type)
         }
 
         "union" => {
             if let Some(variants) = data_type["variants"].as_array() {
                 // Nullable pattern: union(T, null) -> Option<T>
-                let null_count = variants
-                    .iter()
-                    .filter(|v| v["type"].as_str() == Some("null"))
-                    .count();
-                let non_null: Vec<&JsonValue> = variants
-                    .iter()
-                    .filter(|v| v["type"].as_str() != Some("null"))
-                    .collect();
+                let null_count = variants.iter().filter(|v| v["type"].as_str() == Some("null")).count();
+                let non_null: Vec<&JsonValue> = variants.iter().filter(|v| v["type"].as_str() != Some("null")).collect();
                 if null_count == 1 && non_null.len() == 1 {
                     let inner = convex_type_to_rust_type(non_null[0], naming_ctx, ctx);
                     return format!("Option<{}>", inner);
@@ -197,9 +184,7 @@ fn convex_type_to_rust_type(
                 }
 
                 // Literal union: all variants are literals -> Copy enum
-                let all_literals = variants
-                    .iter()
-                    .all(|v| v["type"].as_str() == Some("literal"));
+                let all_literals = variants.iter().all(|v| v["type"].as_str() == Some("literal"));
                 if all_literals {
                     let enum_code = generate_simple_enum(naming_ctx, variants, ctx);
                     ctx.register_struct(naming_ctx, &enum_code);
@@ -226,10 +211,8 @@ fn convex_type_to_rust_type(
 /// Check if an object type's properties match a known table's columns.
 /// When a return type is `v.object({_id: v.id("clients"), _creationTime: v.number(), ...})`,
 /// we detect it matches `ClientsTable` and reuse that struct instead of generating a new one.
-fn try_match_table_shape(
-    props: &serde_json::Map<String, JsonValue>,
-    tables: &[ConvexTable],
-) -> Option<String> {
+fn try_match_table_shape(props: &serde_json::Map<String, JsonValue>, tables: &[ConvexTable]) -> Option<String>
+{
     // User-defined columns (exclude system fields)
     let user_props: std::collections::BTreeMap<&str, &JsonValue> = props
         .iter()
@@ -259,7 +242,8 @@ fn try_match_table_shape(
 // =============================================================================
 
 /// Check if a union is a tagged union (all variants are objects with a `type` literal field).
-fn is_tagged_union(variants: &[JsonValue]) -> bool {
+fn is_tagged_union(variants: &[JsonValue]) -> bool
+{
     if variants.is_empty() {
         return false;
     }
@@ -268,9 +252,7 @@ fn is_tagged_union(variants: &[JsonValue]) -> bool {
             return false;
         }
         if let Some(props) = v["properties"].as_object() {
-            props
-                .get("type")
-                .map_or(false, |t| t["type"].as_str() == Some("literal"))
+            props.get("type").is_some_and(|t| t["type"].as_str() == Some("literal"))
         } else {
             false
         }
@@ -278,11 +260,8 @@ fn is_tagged_union(variants: &[JsonValue]) -> bool {
 }
 
 /// Generate a tagged union enum from object variants with a `type` discriminator field.
-fn generate_tagged_enum(
-    enum_name: &str,
-    variants: &[JsonValue],
-    ctx: &mut CodegenContext,
-) -> String {
+fn generate_tagged_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut CodegenContext) -> String
+{
     let mut code = String::new();
     code.push_str("#[derive(Debug, Clone, Serialize, Deserialize)]\n");
     code.push_str("#[serde(tag = \"type\")]\n");
@@ -290,30 +269,19 @@ fn generate_tagged_enum(
 
     for variant in variants {
         if let Some(props) = variant["properties"].as_object() {
-            let tag = props
-                .get("type")
-                .and_then(|t| t["value"].as_str())
-                .unwrap_or("Unknown");
+            let tag = props.get("type").and_then(|t| t["value"].as_str()).unwrap_or("Unknown");
 
             let variant_name = to_pascal_case(tag);
 
             // Collect non-`type` fields
-            let fields: Vec<(&String, &JsonValue)> = props
-                .iter()
-                .filter(|(k, _)| k.as_str() != "type")
-                .collect();
+            let fields: Vec<(&String, &JsonValue)> = props.iter().filter(|(k, _)| k.as_str() != "type").collect();
 
             if fields.is_empty() {
                 code.push_str(&format!("    {},\n", variant_name));
             } else {
                 code.push_str(&format!("    {} {{\n", variant_name));
                 for (field_name, field_type) in &fields {
-                    let nested_ctx = format!(
-                        "{}{}{}",
-                        enum_name,
-                        variant_name,
-                        capitalize_first_letter(field_name)
-                    );
+                    let nested_ctx = format!("{}{}{}", enum_name, variant_name, capitalize_first_letter(field_name));
                     let rust_type = convex_type_to_rust_type(field_type, &nested_ctx, ctx);
                     code.push_str(&format!("        {}: {},\n", field_name, rust_type));
                 }
@@ -327,20 +295,13 @@ fn generate_tagged_enum(
 }
 
 /// Generate a simple enum from literal or mixed variants.
-fn generate_simple_enum(
-    enum_name: &str,
-    variants: &[JsonValue],
-    ctx: &mut CodegenContext,
-) -> String {
-    let all_literals = variants
-        .iter()
-        .all(|v| v["type"].as_str() == Some("literal"));
+fn generate_simple_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut CodegenContext) -> String
+{
+    let all_literals = variants.iter().all(|v| v["type"].as_str() == Some("literal"));
 
     let mut code = String::new();
     if all_literals {
-        code.push_str(
-            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n",
-        );
+        code.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n");
     } else {
         code.push_str("#[derive(Debug, Clone, Serialize, Deserialize)]\n");
         code.push_str("#[serde(untagged)]\n");
@@ -353,23 +314,15 @@ fn generate_simple_enum(
                 if let Some(value) = variant["value"].as_str() {
                     let variant_name = to_pascal_case(value);
                     if variant_name != value {
-                        code.push_str(&format!(
-                            "    #[serde(rename = \"{}\")]\n",
-                            value
-                        ));
+                        code.push_str(&format!("    #[serde(rename = \"{}\")]\n", value));
                     }
                     code.push_str(&format!("    {},\n", variant_name));
                 }
             }
             Some(type_name) => {
-                let nested_ctx =
-                    format!("{}{}", enum_name, to_pascal_case(type_name));
+                let nested_ctx = format!("{}{}", enum_name, to_pascal_case(type_name));
                 let rust_type = convex_type_to_rust_type(variant, &nested_ctx, ctx);
-                code.push_str(&format!(
-                    "    {}({}),\n",
-                    to_pascal_case(type_name),
-                    rust_type
-                ));
+                code.push_str(&format!("    {}({}),\n", to_pascal_case(type_name), rust_type));
             }
             None => continue,
         }
@@ -384,7 +337,8 @@ fn generate_simple_enum(
 // =============================================================================
 
 /// Generate the struct for a table.
-fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String {
+fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String
+{
     let mut code = String::new();
 
     let table_cap = capitalize_first_letter(&table.name);
@@ -400,24 +354,13 @@ fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String 
     code.push_str("    pub creation_time: f64,\n");
 
     for column in &table.columns {
-        let naming_ctx = format!(
-            "{}{}",
-            table_cap,
-            capitalize_first_letter(&column.name)
-        );
+        let naming_ctx = format!("{}{}", table_cap, capitalize_first_letter(&column.name));
         let rust_type = convex_type_to_rust_type(&column.data_type, &naming_ctx, ctx);
         let rust_name = to_snake_case(&column.name);
         if rust_name != column.name {
-            code.push_str(&format!(
-                "    #[serde(rename = \"{}\")]\n",
-                column.name
-            ));
+            code.push_str(&format!("    #[serde(rename = \"{}\")]\n", column.name));
         }
-        code.push_str(&format!(
-            "    pub {}: {},\n",
-            rust_name,
-            rust_type
-        ));
+        code.push_str(&format!("    pub {}: {},\n", rust_name, rust_type));
     }
 
     code.push_str("}\n\n");
@@ -429,7 +372,8 @@ fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String 
 // =============================================================================
 
 /// Generate the args struct for a function.
-fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -> String {
+fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -> String
+{
     let mut code = String::new();
 
     let file_cap = capitalize_first_letter(&function.file_name);
@@ -443,12 +387,7 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     code.push_str(&format!("pub struct {} {{\n", struct_name));
 
     for param in &function.params {
-        let naming_ctx = format!(
-            "{}{}{}",
-            file_cap,
-            fn_cap,
-            capitalize_first_letter(&param.name)
-        );
+        let naming_ctx = format!("{}{}{}", file_cap, fn_cap, capitalize_first_letter(&param.name));
         let rust_type = convex_type_to_rust_type(&param.data_type, &naming_ctx, ctx);
         code.push_str(&format!("    pub {}: {},\n", param.name, rust_type));
     }
@@ -458,10 +397,7 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     // FUNCTION_PATH constant
     code.push_str(&format!("impl {} {{\n", struct_name));
     code.push_str("    pub const FUNCTION_PATH: &'static str = ");
-    code.push_str(&format!(
-        "\"{}:{}\";\n",
-        function.file_name, function.name
-    ));
+    code.push_str(&format!("\"{}:{}\";\n", function.file_name, function.name));
     code.push_str("}\n\n");
 
     // From impl for BTreeMap
@@ -469,17 +405,12 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
         "impl From<{}> for std::collections::BTreeMap<String, serde_json::Value> {{\n",
         struct_name
     ));
-    code.push_str(&format!(
-        "    fn from(_args: {}) -> Self {{\n",
-        struct_name
-    ));
+    code.push_str(&format!("    fn from(_args: {}) -> Self {{\n", struct_name));
 
     if function.params.is_empty() {
         code.push_str("        std::collections::BTreeMap::new()\n");
     } else {
-        code.push_str(
-            "        let mut map = std::collections::BTreeMap::new();\n",
-        );
+        code.push_str("        let mut map = std::collections::BTreeMap::new();\n");
         for param in &function.params {
             code.push_str(&format!(
                 "        map.insert(\"{}\".to_string(), serde_json::to_value(_args.{}).unwrap());\n",
@@ -500,11 +431,9 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
 // =============================================================================
 
 /// Generate the typed API trait and implementation for ConvexClient.
-fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> String {
-    let public_functions: Vec<&ConvexFunction> = functions
-        .iter()
-        .filter(|f| !f.type_.starts_with("internal"))
-        .collect();
+fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> String
+{
+    let public_functions: Vec<&ConvexFunction> = functions.iter().filter(|f| !f.type_.starts_with("internal")).collect();
 
     if public_functions.is_empty() {
         return String::new();
@@ -522,9 +451,7 @@ fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> 
     }
 
     // TypedSubscription wrapper if any query has a typed return
-    let has_typed_queries = public_functions
-        .iter()
-        .any(|f| f.type_ == "query" && f.return_type.is_some());
+    let has_typed_queries = public_functions.iter().any(|f| f.type_ == "query" && f.return_type.is_some());
     if has_typed_queries {
         code.push_str(&generate_typed_subscription_code());
     }
@@ -549,7 +476,8 @@ fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> 
 
 /// Get the Rust return type string for a function's return type.
 /// Returns None if the function has no typed return (uses FunctionResult).
-fn get_return_type_str(func: &ConvexFunction, ctx: &mut CodegenContext) -> Option<String> {
+fn get_return_type_str(func: &ConvexFunction, ctx: &mut CodegenContext) -> Option<String>
+{
     func.return_type.as_ref().map(|rt| {
         let naming_ctx = format!(
             "{}{}Return",
@@ -561,7 +489,8 @@ fn get_return_type_str(func: &ConvexFunction, ctx: &mut CodegenContext) -> Optio
 }
 
 /// Generate a trait method signature for a Convex function.
-fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String {
+fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String
+{
     let mut code = String::new();
     let file_snake = to_snake_case(&func.file_name);
     let fn_snake = to_snake_case(&func.name);
@@ -618,7 +547,8 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> Str
 }
 
 /// Generate a trait implementation method for a Convex function.
-fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String {
+fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String
+{
     let mut code = String::new();
     let file_snake = to_snake_case(&func.file_name);
     let fn_snake = to_snake_case(&func.name);
@@ -637,8 +567,8 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
     };
 
     let args_body = if has_args {
-        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\
-         \x20       let args = json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
+        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\x20       let args = \
+         json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
             .to_string()
     } else {
         "        let args = std::collections::BTreeMap::new();\n".to_string()
@@ -656,12 +586,10 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
             Some(rt) if rt == "()" => {
                 // Special case: null/unit return — no deserialization needed
                 format!(
-                    "        let result = self.{sdk_call}(\"{function_path}\", args).await?;\n\
-                     \x20       match result {{\n\
-                     \x20           convex::FunctionResult::Value(_) => Ok(()),\n\
-                     \x20           convex::FunctionResult::ErrorMessage(msg) => Err(anyhow::anyhow!(msg)),\n\
-                     \x20           convex::FunctionResult::ConvexError(err) => Err(anyhow::anyhow!(err.message)),\n\
-                     \x20       }}\n"
+                    "        let result = self.{sdk_call}(\"{function_path}\", args).await?;\n\x20       match result \
+                     {{\n\x20           convex::FunctionResult::Value(_) => Ok(()),\n\x20           \
+                     convex::FunctionResult::ErrorMessage(msg) => Err(anyhow::anyhow!(msg)),\n\x20           \
+                     convex::FunctionResult::ConvexError(err) => Err(anyhow::anyhow!(err.message)),\n\x20       }}\n"
                 )
             }
             Some(_) => {
@@ -680,9 +608,7 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
             }
             None => {
                 // No typed return — pass through FunctionResult
-                format!(
-                    "        self.{sdk_call}(\"{function_path}\", args).await\n"
-                )
+                format!("        self.{sdk_call}(\"{function_path}\", args).await\n")
             }
         }
     };
@@ -700,13 +626,11 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
             code.push_str(&args_body);
             if return_type_str.is_some() {
                 code.push_str(&format!(
-                    "        let sub = self.subscribe(\"{function_path}\", args).await?;\n\
-                     \x20       Ok(TypedSubscription::new(sub))\n"
+                    "        let sub = self.subscribe(\"{function_path}\", args).await?;\n\x20       \
+                     Ok(TypedSubscription::new(sub))\n"
                 ));
             } else {
-                code.push_str(&format!(
-                    "        self.subscribe(\"{function_path}\", args).await\n"
-                ));
+                code.push_str(&format!("        self.subscribe(\"{function_path}\", args).await\n"));
             }
             code.push_str("    }\n");
 
@@ -745,7 +669,8 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
 // =============================================================================
 
 /// Generate the json_to_convex_value helper function in the output.
-fn generate_json_to_convex_value_helper() -> String {
+fn generate_json_to_convex_value_helper() -> String
+{
     "fn json_to_convex_value(v: serde_json::Value) -> convex::Value {\n\
      \x20   match v {\n\
      \x20       serde_json::Value::Null => convex::Value::Null,\n\
@@ -772,7 +697,8 @@ fn generate_json_to_convex_value_helper() -> String {
 }
 
 /// Generate the convex_value_to_json helper function in the output.
-fn generate_convex_value_to_json_helper() -> String {
+fn generate_convex_value_to_json_helper() -> String
+{
     "fn convex_value_to_json(v: &convex::Value) -> serde_json::Value {\n\
      \x20   match v {\n\
      \x20       convex::Value::Null => serde_json::Value::Null,\n\
@@ -793,7 +719,8 @@ fn generate_convex_value_to_json_helper() -> String {
 }
 
 /// Generate the TypedSubscription wrapper struct and Stream impl.
-fn generate_typed_subscription_code() -> String {
+fn generate_typed_subscription_code() -> String
+{
     "pub struct TypedSubscription<T> {\n\
      \x20   inner: convex::QuerySubscription,\n\
      \x20   _phantom: std::marker::PhantomData<fn() -> T>,\n\
@@ -838,7 +765,8 @@ fn generate_typed_subscription_code() -> String {
 // =============================================================================
 
 /// Capitalize the first letter of a string.
-fn capitalize_first_letter(s: &str) -> String {
+fn capitalize_first_letter(s: &str) -> String
+{
     if s.is_empty() {
         return String::new();
     }
@@ -850,23 +778,23 @@ fn capitalize_first_letter(s: &str) -> String {
     first_char.to_uppercase().to_string() + &rest
 }
 
-fn to_pascal_case(s: &str) -> String {
+fn to_pascal_case(s: &str) -> String
+{
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
-                Some(first) => {
-                    first.to_uppercase().collect::<String>() + &chars.collect::<String>()
-                }
+                Some(first) => first.to_uppercase().collect::<String>() + &chars.collect::<String>(),
             }
         })
         .collect()
 }
 
 /// Convert a camelCase string to snake_case.
-fn to_snake_case(s: &str) -> String {
+fn to_snake_case(s: &str) -> String
+{
     let mut result = String::new();
     for (i, c) in s.chars().enumerate() {
         if c.is_uppercase() && i > 0 {

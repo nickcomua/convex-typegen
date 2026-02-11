@@ -160,8 +160,8 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
 
         // Walk through method chains like defineTable({...}).index(...).index(...)
         // to find the defineTable call and its arguments.
-        let define_table_call = find_define_table_call(&table_prop["value"])
-            .ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
+        let define_table_call =
+            find_define_table_call(&table_prop["value"]).ok_or_else(|| ConvexTypeGeneratorError::InvalidSchema {
                 context: context.to_string(),
                 details: format!("Could not find defineTable call for table '{}'", table_name),
             })?;
@@ -274,9 +274,7 @@ fn resolve_deep(node: &JsonValue, bindings: &HashMap<String, JsonValue>, depth: 
                 .collect();
             JsonValue::Object(new_map)
         }
-        JsonValue::Array(arr) => {
-            JsonValue::Array(arr.iter().map(|v| resolve_deep(v, bindings, depth)).collect())
-        }
+        JsonValue::Array(arr) => JsonValue::Array(arr.iter().map(|v| resolve_deep(v, bindings, depth)).collect()),
         _ => node.clone(),
     }
 }
@@ -297,9 +295,7 @@ fn find_define_table_call(node: &JsonValue) -> Option<&JsonValue>
     }
 
     // Method chain: something.index(...) — recurse into the object
-    if callee["type"].as_str() == Some("StaticMemberExpression")
-        || callee["type"].as_str() == Some("MemberExpression")
-    {
+    if callee["type"].as_str() == Some("StaticMemberExpression") || callee["type"].as_str() == Some("MemberExpression") {
         return find_define_table_call(&callee["object"]);
     }
 
@@ -638,7 +634,7 @@ fn extract_function_params(
                 if let Some(args_props) = prop["value"]["properties"].as_array() {
                     for arg_prop in args_props {
                         // Validate argument property structure
-                        if !arg_prop["type"].as_str().map_or(false, |t| t == "ObjectProperty") {
+                        if arg_prop["type"].as_str() != Some("ObjectProperty") {
                             return Err(ConvexTypeGeneratorError::InvalidSchema {
                                 context: format!("file_{}", file_name),
                                 details: "Invalid argument property structure".to_string(),
