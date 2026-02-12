@@ -676,3 +676,109 @@ fn test_untyped_query_no_return()
         "untyped query should return FunctionResult"
     );
 }
+
+// =============================================================================
+// Optional args: BTreeMap From impl skips None fields
+// =============================================================================
+
+#[test]
+fn test_optional_args_skip_none_in_btreemap()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            messages: defineTable({
+                text: v.optional(v.string()),
+                mediaId: v.optional(v.string()),
+            }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const upsert = mutation({
+                args: {
+                    chatId: v.string(),
+                    text: v.optional(v.string()),
+                    mediaId: v.optional(v.string()),
+                },
+                returns: v.null(),
+                handler: async (ctx, args) => {},
+            });
+            "#,
+            "messages.ts",
+        )]),
+    );
+
+    // Required field should use unconditional map.insert
+    assert!(
+        code.contains(r#"map.insert("chatId".to_string()"#),
+        "required field should use unconditional insert"
+    );
+
+    // Optional fields should use `if let Some(val)` to skip None
+    assert!(
+        code.contains(r#"if let Some(val) = _args.text {"#),
+        "optional text field should use if let Some(val)"
+    );
+    assert!(
+        code.contains(r#"if let Some(val) = _args.mediaId {"#),
+        "optional mediaId field should use if let Some(val)"
+    );
+
+    // The unconditional pattern should NOT appear for optional fields
+    assert!(
+        !code.contains(r#"map.insert("text".to_string(), serde_json::to_value(_args.text)"#),
+        "optional text should NOT use unconditional insert"
+    );
+    assert!(
+        !code.contains(r#"map.insert("mediaId".to_string(), serde_json::to_value(_args.mediaId)"#),
+        "optional mediaId should NOT use unconditional insert"
+    );
+}
+
+#[test]
+fn test_nullable_union_args_skip_none_in_btreemap()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const update = mutation({
+                args: {
+                    name: v.string(),
+                    description: v.union(v.string(), v.null()),
+                },
+                returns: v.null(),
+                handler: async (ctx, args) => {},
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    // v.union(v.string(), v.null()) maps to Option<String> and should skip None
+    assert!(
+        code.contains("pub description: Option<String>"),
+        "union(string, null) should be Option<String>"
+    );
+    assert!(
+        code.contains(r#"if let Some(val) = _args.description {"#),
+        "nullable union field should use if let Some(val)"
+    );
+}

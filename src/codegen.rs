@@ -99,6 +99,28 @@ use serde::{Serialize, Deserialize};
 }
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+/// Check if a function parameter maps to `Option<T>` in Rust.
+/// This is true for `v.optional(...)` and `v.union(..., v.null())` with exactly one non-null variant.
+fn is_optional_param(param: &crate::convex::ConvexFunctionParam) -> bool {
+    match param.data_type["type"].as_str() {
+        Some("optional") => true,
+        Some("union") => {
+            if let Some(variants) = param.data_type["variants"].as_array() {
+                let null_count = variants.iter().filter(|v| v["type"].as_str() == Some("null")).count();
+                let non_null_count = variants.len() - null_count;
+                null_count == 1 && non_null_count == 1
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+// =============================================================================
 // Type conversion (unified — handles all types including objects and unions)
 // =============================================================================
 
@@ -412,10 +434,17 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     } else {
         code.push_str("        let mut map = std::collections::BTreeMap::new();\n");
         for param in &function.params {
-            code.push_str(&format!(
-                "        map.insert(\"{}\".to_string(), serde_json::to_value(_args.{}).unwrap());\n",
-                param.name, param.name
-            ));
+            if is_optional_param(param) {
+                code.push_str(&format!(
+                    "        if let Some(val) = _args.{} {{\n            map.insert(\"{}\".to_string(), serde_json::to_value(val).unwrap());\n        }}\n",
+                    param.name, param.name
+                ));
+            } else {
+                code.push_str(&format!(
+                    "        map.insert(\"{}\".to_string(), serde_json::to_value(_args.{}).unwrap());\n",
+                    param.name, param.name
+                ));
+            }
         }
         code.push_str("        map\n");
     }

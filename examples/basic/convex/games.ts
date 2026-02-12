@@ -115,6 +115,22 @@ export const updateGameStatus = mutation({
     },
 });
 
+/** Update game with optional note — tests that optional args serialize correctly. */
+export const updateWithNote = mutation({
+    args: {
+        gameId: v.id("games"),
+        note: v.optional(v.string()),
+        score: v.optional(v.number()),
+    },
+    returns: v.null(),
+    handler: async (ctx, { gameId, note, score }) => {
+        const game = await ctx.db.get(gameId);
+        if (!game) throw new Error("Game not found");
+        // Just validate the args are received — no actual update needed for testing
+        await ctx.db.patch(gameId, { lastPlayedAt: Date.now() });
+    },
+});
+
 async function getGameData(ctx: QueryCtx)
 {
     return await ctx.db.query("games").first();

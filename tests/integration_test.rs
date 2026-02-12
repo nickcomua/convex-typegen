@@ -142,6 +142,22 @@ fn test_codegen_pipeline()
     assert!(output.contains("\"games:listGames\""), "Missing listGames path");
     assert!(output.contains("\"games:getByStatus\""), "Missing getByStatus path");
     assert!(output.contains("\"games:updateGameStatus\""), "Missing updateGameStatus path");
+    assert!(output.contains("\"games:updateWithNote\""), "Missing updateWithNote path");
+
+    // Optional args in updateWithNote should use `if let Some` in BTreeMap From impl
+    assert!(
+        output.contains("pub struct GamesUpdateWithNoteArgs"),
+        "Missing GamesUpdateWithNoteArgs"
+    );
+    assert!(
+        output.contains("if let Some(val) = _args.note"),
+        "Optional note field should use if let Some"
+    );
+    assert!(
+        output.contains("if let Some(val) = _args.score"),
+        "Optional score field should use if let Some"
+    );
+
     assert!(output.contains("\"players:listActive\""), "Missing listActive path");
     assert!(output.contains("\"players:getById\""), "Missing getById path");
     assert!(output.contains("\"players:getByRank\""), "Missing getByRank path");
@@ -328,6 +344,63 @@ async fn test_list_games()
 }
 
 // =============================================================================
+// E2E: Optional args against real Convex backend
+// =============================================================================
+
+/// Regression test: calling a mutation with None optional args must not send
+/// `null` to Convex. Convex's `v.optional(v.string())` rejects explicit null —
+/// the field must be absent from the args object when the value is None.
+#[tokio::test]
+
+async fn test_mutation_with_none_optional_args()
+{
+    use example_types::GamesUpdateWithNoteArgs;
+
+    let env = get_test_env().await;
+    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+
+    // First, create a game so we have a valid ID
+    client.games_win_game().await.expect("Win failed");
+    let game = client.query_games_get_game().await.expect("Query failed");
+    let game = game.expect("Expected a game to exist");
+
+    // Call mutation with None optional args — this would fail with
+    // "ArgumentValidationError: Value does not match validator" before the fix
+    client
+        .games_update_with_note(GamesUpdateWithNoteArgs {
+            gameId: game.id.clone(),
+            note: None,
+            score: None,
+        })
+        .await
+        .expect("Mutation with None optional args should succeed");
+}
+
+#[tokio::test]
+
+async fn test_mutation_with_some_optional_args()
+{
+    use example_types::GamesUpdateWithNoteArgs;
+
+    let env = get_test_env().await;
+    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+
+    client.games_win_game().await.expect("Win failed");
+    let game = client.query_games_get_game().await.expect("Query failed");
+    let game = game.expect("Expected a game to exist");
+
+    // Call mutation with Some optional args
+    client
+        .games_update_with_note(GamesUpdateWithNoteArgs {
+            gameId: game.id.clone(),
+            note: Some("test note".to_string()),
+            score: Some(99.0),
+        })
+        .await
+        .expect("Mutation with Some optional args should succeed");
+}
+
+// =============================================================================
 // Args Serialization
 // =============================================================================
 
@@ -381,6 +454,60 @@ fn test_tagged_union_args_into_btreemap()
     assert_eq!(map.len(), 2);
     assert_eq!(map["gameId"], serde_json::json!("game123"));
     assert_eq!(map["result"], serde_json::json!({"type": "Win", "bonus": 2.0}));
+}
+
+#[test]
+fn test_optional_args_none_skipped_in_btreemap()
+{
+    use example_types::GamesUpdateWithNoteArgs;
+
+    // When optional fields are None, they should be absent from the map
+    let map: std::collections::BTreeMap<String, serde_json::Value> = GamesUpdateWithNoteArgs {
+        gameId: "game123".to_string(),
+        note: None,
+        score: None,
+    }
+    .into();
+    assert_eq!(map.len(), 1, "None fields should be absent from map");
+    assert_eq!(map["gameId"], serde_json::json!("game123"));
+    assert!(!map.contains_key("note"), "None note should be absent");
+    assert!(!map.contains_key("score"), "None score should be absent");
+}
+
+#[test]
+fn test_optional_args_some_included_in_btreemap()
+{
+    use example_types::GamesUpdateWithNoteArgs;
+
+    // When optional fields are Some, they should appear in the map
+    let map: std::collections::BTreeMap<String, serde_json::Value> = GamesUpdateWithNoteArgs {
+        gameId: "game456".to_string(),
+        note: Some("hello".to_string()),
+        score: Some(42.0),
+    }
+    .into();
+    assert_eq!(map.len(), 3, "Some fields should be present in map");
+    assert_eq!(map["gameId"], serde_json::json!("game456"));
+    assert_eq!(map["note"], serde_json::json!("hello"));
+    assert_eq!(map["score"], serde_json::json!(42.0));
+}
+
+#[test]
+fn test_optional_args_mixed_in_btreemap()
+{
+    use example_types::GamesUpdateWithNoteArgs;
+
+    // Mix of Some and None — only Some fields in the map
+    let map: std::collections::BTreeMap<String, serde_json::Value> = GamesUpdateWithNoteArgs {
+        gameId: "game789".to_string(),
+        note: Some("partial".to_string()),
+        score: None,
+    }
+    .into();
+    assert_eq!(map.len(), 2, "only gameId and note should be present");
+    assert_eq!(map["gameId"], serde_json::json!("game789"));
+    assert_eq!(map["note"], serde_json::json!("partial"));
+    assert!(!map.contains_key("score"), "None score should be absent");
 }
 
 #[test]
