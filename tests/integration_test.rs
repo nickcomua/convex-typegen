@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use basic as example_types;
 use common::get_test_env;
 use convex::ConvexClient;
-use example_types::ConvexApi;
+use example_types::{ConvexApi, ConvexApiClient};
 
 // =============================================================================
 // Codegen Pipeline (no Docker needed)
@@ -170,40 +170,40 @@ fn test_codegen_pipeline()
 
     // Typed query returns: getGame has returns: v.union(gameDoc, v.null()) → Option<GamesTable>
     assert!(
-        output.contains("async fn query_games_get_game(&mut self) -> anyhow::Result<Option<GamesTable>>"),
-        "getGame should return Option<GamesTable>"
+        output.contains("fn query_games_get_game(&self) -> impl std::future::Future<Output = Result<Option<GamesTable>, ConvexError>>"),
+        "getGame should return Result<Option<GamesTable>, ConvexError>"
     );
 
     // Typed array query returns: listGames has returns: v.array(gameDoc) → Vec<GamesTable>
     assert!(
-        output.contains("async fn query_games_list_games(&mut self) -> anyhow::Result<Vec<GamesTable>>"),
-        "listGames should return Vec<GamesTable>"
+        output.contains("fn query_games_list_games(&self) -> impl std::future::Future<Output = Result<Vec<GamesTable>, ConvexError>>"),
+        "listGames should return Result<Vec<GamesTable>, ConvexError>"
     );
 
     // Typed subscription returns
     assert!(
         output.contains(
-            "async fn subscribe_games_get_game(&mut self) -> anyhow::Result<TypedSubscription<Option<GamesTable>>>"
+            "fn subscribe_games_get_game(&self) -> impl std::future::Future<Output = Result<TypedSubscription<Option<GamesTable>>, ConvexError>>"
         ),
         "subscribe_games_get_game should return TypedSubscription<Option<GamesTable>>"
     );
     assert!(
         output.contains(
-            "async fn subscribe_players_list_active(&mut self) -> anyhow::Result<TypedSubscription<Vec<PlayersTable>>>"
+            "fn subscribe_players_list_active(&self) -> impl std::future::Future<Output = Result<TypedSubscription<Vec<PlayersTable>>, ConvexError>>"
         ),
         "subscribe_players_list_active should return TypedSubscription<Vec<PlayersTable>>"
     );
 
     // Mutation typed returns: create has returns: v.id("players") → String
     assert!(
-        output.contains("async fn players_create(&mut self, args: PlayersCreateArgs) -> anyhow::Result<String>"),
-        "players_create should return String (v.id)"
+        output.contains("fn players_create(&self, args: PlayersCreateArgs) -> impl std::future::Future<Output = Result<String, ConvexError>>"),
+        "players_create should return Result<String, ConvexError>"
     );
 
     // Mutation null returns: winGame has returns: v.null() → ()
     assert!(
-        output.contains("async fn games_win_game(&mut self) -> anyhow::Result<()>"),
-        "winGame should return () (returns: v.null())"
+        output.contains("fn games_win_game(&self) -> impl std::future::Future<Output = Result<(), ConvexError>>"),
+        "winGame should return Result<(), ConvexError>"
     );
 
     // TypedSubscription struct
@@ -216,9 +216,15 @@ fn test_codegen_pipeline()
         "Missing Stream impl"
     );
 
-    // ConvexApi impl for ConvexClient
+    // ConvexApiClient wrapper struct
     assert!(
-        output.contains("impl ConvexApi for convex::ConvexClient"),
+        output.contains("pub struct ConvexApiClient"),
+        "Missing ConvexApiClient wrapper struct"
+    );
+
+    // ConvexApi impl for ConvexApiClient
+    assert!(
+        output.contains("impl ConvexApi for ConvexApiClient"),
         "Missing trait impl"
     );
 
@@ -244,7 +250,7 @@ fn test_codegen_pipeline()
 async fn test_query_empty_game()
 {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     // Fresh database — getGame returns None (typed)
     let game = client.query_games_get_game().await.expect("Query failed");
@@ -256,7 +262,7 @@ async fn test_query_empty_game()
 async fn test_win_game_creates_record()
 {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     // Win a game — typed return is () on success
     client.games_win_game().await.expect("Win failed");
@@ -274,7 +280,7 @@ async fn test_win_game_creates_record()
 async fn test_loss_game()
 {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     client.games_loss_game().await.expect("Loss failed");
 }
@@ -286,7 +292,7 @@ async fn test_subscribe_get_game()
     use futures::StreamExt;
 
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     let mut sub = client.subscribe_games_get_game().await.expect("Failed to subscribe");
 
@@ -305,7 +311,7 @@ async fn test_subscribe_get_game()
 async fn test_full_game_lifecycle()
 {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     // Win twice — typed return is () on success
     client.games_win_game().await.expect("First win failed");
@@ -334,7 +340,7 @@ async fn test_full_game_lifecycle()
 async fn test_list_games()
 {
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     // listGames returns Vec<GamesTable> directly
     let games: Vec<example_types::GamesTable> = client.query_games_list_games().await.expect("Query failed");
@@ -357,7 +363,7 @@ async fn test_mutation_with_none_optional_args()
     use example_types::GamesUpdateWithNoteArgs;
 
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     // First, create a game so we have a valid ID
     client.games_win_game().await.expect("Win failed");
@@ -383,7 +389,7 @@ async fn test_mutation_with_some_optional_args()
     use example_types::GamesUpdateWithNoteArgs;
 
     let env = get_test_env().await;
-    let mut client = ConvexClient::new(&env.convex_url).await.expect("Failed to connect");
+    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
 
     client.games_win_game().await.expect("Win failed");
     let game = client.query_games_get_game().await.expect("Query failed");

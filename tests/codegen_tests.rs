@@ -598,8 +598,8 @@ fn test_typed_query_return()
 
     // Query should return Vec<ItemsTable>
     assert!(
-        code.contains("-> anyhow::Result<Vec<ItemsTable>>"),
-        "query should return anyhow::Result<Vec<ItemsTable>>"
+        code.contains("Result<Vec<ItemsTable>, ConvexError>"),
+        "query should return Result<Vec<ItemsTable>, ConvexError>"
     );
 }
 
@@ -633,8 +633,8 @@ fn test_mutation_null_return()
     );
 
     assert!(
-        code.contains("-> anyhow::Result<()>"),
-        "mutation with v.null() return should be anyhow::Result<()>"
+        code.contains("Result<(), ConvexError>"),
+        "mutation with v.null() return should be Result<(), ConvexError>"
     );
 }
 
@@ -668,11 +668,11 @@ fn test_untyped_query_no_return()
 
     // Without `returns`, subscribe falls back to raw QuerySubscription
     assert!(
-        code.contains("-> anyhow::Result<convex::QuerySubscription>"),
+        code.contains("Result<convex::QuerySubscription, ConvexError>"),
         "untyped query subscribe should return raw QuerySubscription"
     );
     assert!(
-        code.contains("-> anyhow::Result<convex::FunctionResult>"),
+        code.contains("Result<convex::FunctionResult, ConvexError>"),
         "untyped query should return FunctionResult"
     );
 }
