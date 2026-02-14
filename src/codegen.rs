@@ -3,7 +3,7 @@ use std::io::{Seek, SeekFrom, Write};
 
 use serde_json::Value as JsonValue;
 
-use crate::convex::{ConvexFunction, ConvexFunctions, ConvexSchema, ConvexTable};
+use crate::types::{ConvexFunction, ConvexFunctions, ConvexSchema, ConvexTable};
 use crate::errors::ConvexTypeGeneratorError;
 
 // =============================================================================
@@ -104,13 +104,13 @@ use serde::{Serialize, Deserialize};
 
 /// Check if a function parameter maps to `Option<T>` in Rust.
 /// This is true for `v.optional(...)` and `v.union(..., v.null())` with exactly one non-null variant.
-fn is_optional_param(param: &crate::convex::ConvexFunctionParam) -> bool
+fn is_optional_param(param: &crate::types::ConvexFunctionParam) -> bool
 {
     match param.data_type["type"].as_str() {
         Some("optional") => true,
         Some("union") => {
             if let Some(variants) = param.data_type["variants"].as_array() {
-                let null_count = variants.iter().filter(|v| v["type"].as_str() == Some("null")).count();
+                let null_count = variants.iter().filter(|variant| variant["type"].as_str() == Some("null")).count();
                 let non_null_count = variants.len() - null_count;
                 null_count == 1 && non_null_count == 1
             } else {
@@ -224,7 +224,15 @@ fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut C
             "serde_json::Value".to_string()
         }
 
-        "literal" => "String".to_string(),
+        "literal" => {
+            if data_type["value"].is_boolean() {
+                "bool".to_string()
+            } else if data_type["value"].is_number() {
+                "f64".to_string()
+            } else {
+                "String".to_string()
+            }
+        }
         "id" => "String".to_string(),
 
         _ => "serde_json::Value".to_string(),
@@ -331,7 +339,10 @@ fn generate_simple_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
     }
     code.push_str(&format!("pub enum {} {{\n", enum_name));
 
-    for variant in variants {
+    // Track used variant names to avoid duplicates (e.g., two Object variants)
+    let mut used_names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for (idx, variant) in variants.iter().enumerate() {
         match variant["type"].as_str() {
             Some("literal") => {
                 if let Some(value) = variant["value"].as_str() {
@@ -340,12 +351,28 @@ fn generate_simple_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
                         code.push_str(&format!("    #[serde(rename = \"{}\")]\n", value));
                     }
                     code.push_str(&format!("    {},\n", variant_name));
+                } else if let Some(value) = variant["value"].as_bool() {
+                    let variant_name = if value { "True" } else { "False" };
+                    code.push_str(&format!("    {},\n", variant_name));
+                } else if let Some(value) = variant["value"].as_f64() {
+                    // Numeric literal — generate a unit variant with a rename
+                    let variant_name = format!("V{}", value.abs() as u64);
+                    code.push_str(&format!("    #[serde(rename = \"{}\")]\n", value));
+                    code.push_str(&format!("    {},\n", variant_name));
                 }
             }
             Some(type_name) => {
-                let nested_ctx = format!("{}{}", enum_name, to_pascal_case(type_name));
+                let base_name = to_pascal_case(type_name);
+                let count = used_names.entry(base_name.clone()).or_insert(0);
+                *count += 1;
+                let variant_name = if *count > 1 {
+                    format!("{}{}", base_name, count)
+                } else {
+                    base_name
+                };
+                let nested_ctx = format!("{}{}V{}", enum_name, to_pascal_case(type_name), idx);
                 let rust_type = convex_type_to_rust_type(variant, &nested_ctx, ctx);
-                code.push_str(&format!("    {}({}),\n", to_pascal_case(type_name), rust_type));
+                code.push_str(&format!("    {}({}),\n", variant_name, rust_type));
             }
             None => continue,
         }

@@ -7,20 +7,14 @@ pub enum ConvexTypeGeneratorError
     /// The schema file could not be found at the specified path
     MissingSchemaFile,
 
-    /// Failed to parse a source file
-    ParsingFailed
-    {
-        /// Path to the file that failed to parse
-        file: String,
-        /// Details about the parsing failure
-        details: String,
-    },
+    /// The `bun` binary was not found in PATH
+    BunNotFound,
 
-    /// The schema file exists but is empty
-    EmptySchemaFile
+    /// The Bun extractor process failed or returned invalid output
+    ExtractionFailed
     {
-        /// Path to the empty schema file
-        file: String,
+        /// Details about the extraction failure
+        details: String,
     },
 
     /// The provided path doesn't have a valid file name component
@@ -28,7 +22,8 @@ pub enum ConvexTypeGeneratorError
 
     /// The file name contains invalid Unicode characters
     InvalidUnicode(String),
-    /// Failed to serialize the AST to JSON
+
+    /// Failed to serialize data to JSON
     SerializationFailed(serde_json::Error),
 
     /// An IO error occurred while reading or writing files
@@ -48,22 +43,6 @@ pub enum ConvexTypeGeneratorError
         /// Details about why the schema is invalid
         details: String,
     },
-
-    /// A circular reference was detected in type definitions
-    CircularReference
-    {
-        /// The path of types that form the circular reference
-        path: Vec<String>,
-    },
-
-    /// An invalid type name was encountered
-    InvalidType
-    {
-        /// The invalid type that was found
-        found: String,
-        /// List of valid type names
-        valid_types: Vec<String>,
-    },
 }
 
 impl fmt::Display for ConvexTypeGeneratorError
@@ -72,11 +51,14 @@ impl fmt::Display for ConvexTypeGeneratorError
     {
         match self {
             Self::MissingSchemaFile => write!(f, "Schema file not found"),
-            Self::ParsingFailed { file, details } => {
-                write!(f, "Failed to parse file '{}': {}", file, details)
+            Self::BunNotFound => {
+                write!(
+                    f,
+                    "bun binary not found in PATH. Install bun: https://bun.sh"
+                )
             }
-            Self::EmptySchemaFile { file } => {
-                write!(f, "Schema file '{}' is empty", file)
+            Self::ExtractionFailed { details } => {
+                write!(f, "Type extraction failed: {}", details)
             }
             Self::InvalidPath(path) => {
                 write!(f, "Invalid path: {}", path)
@@ -85,7 +67,7 @@ impl fmt::Display for ConvexTypeGeneratorError
                 write!(f, "Path contains invalid Unicode: {}", path)
             }
             Self::SerializationFailed(err) => {
-                write!(f, "Failed to serialize AST: {}", err)
+                write!(f, "Failed to serialize: {}", err)
             }
             Self::IOError { file, error } => {
                 write!(f, "IO error while reading '{}': {}", file, error)
@@ -93,17 +75,10 @@ impl fmt::Display for ConvexTypeGeneratorError
             Self::InvalidSchema { context, details } => {
                 write!(f, "Invalid schema at {}: {}", context, details)
             }
-            Self::CircularReference { path } => {
-                write!(f, "Circular type reference detected: {}", path.join(" -> "))
-            }
-            Self::InvalidType { found, valid_types } => {
-                write!(f, "Invalid type '{}'. Valid types are: {}", found, valid_types.join(", "))
-            }
         }
     }
 }
 
-// Add this implementation to convert std::io::Error to ConvexTypeGeneratorError
 impl From<std::io::Error> for ConvexTypeGeneratorError
 {
     fn from(error: std::io::Error) -> Self
@@ -115,7 +90,6 @@ impl From<std::io::Error> for ConvexTypeGeneratorError
     }
 }
 
-// Implement std::error::Error for better error handling
 impl std::error::Error for ConvexTypeGeneratorError {}
 
 impl ConvexTypeGeneratorError

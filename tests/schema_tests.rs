@@ -17,7 +17,8 @@ fn setup_test_schema(content: &str) -> (TempDir, PathBuf)
 fn test_valid_schema()
 {
     let schema_content = r#"
-        import { defineSchema, defineTable } from "convex/schema";
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
 
         export default defineSchema({
             messages: defineTable({
@@ -46,7 +47,7 @@ fn test_valid_schema()
 fn test_invalid_schema_syntax()
 {
     let schema_content = r#"
-        import { defineSchema, defineTable } from "convex/schema";
+        import { defineSchema, defineTable } from "convex/server";
 
         export default defineSchema({
             messages: defineTable({
@@ -64,8 +65,8 @@ fn test_invalid_schema_syntax()
     };
 
     match generate(config) {
-        Err(ConvexTypeGeneratorError::ParsingFailed { .. }) => (),
-        other => panic!("Expected ParsingFailed error, got {:?}", other),
+        Err(ConvexTypeGeneratorError::ExtractionFailed { .. }) => (),
+        other => panic!("Expected ExtractionFailed error, got {:?}", other),
     }
 }
 

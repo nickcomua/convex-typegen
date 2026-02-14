@@ -25,6 +25,7 @@ fn main()
         schema_path: std::path::PathBuf::from("convex/schema.ts"),
         out_file: format!("{}/convex_types.rs", std::env::var("OUT_DIR").unwrap()),
         function_paths,
+        helper_stubs: std::collections::HashMap::new(),
     };
 
     match generate(config) {

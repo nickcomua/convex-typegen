@@ -1,7 +1,8 @@
 //! Generate Rust types from Convex schema and function definitions.
 //!
-//! This crate parses `schema.ts` and Convex function files (queries, mutations, actions)
-//! using [oxc](https://oxc.rs) and generates:
+//! This crate runs a Bun-based extractor that mocks Convex packages and
+//! executes your actual `schema.ts` + function files. The mock `v.*` calls
+//! produce JSON descriptors that are then converted into:
 //!
 //! - **Table structs** with serde attributes for each table in the schema
 //! - **Function arg structs** for every query, mutation, and action
@@ -25,13 +26,14 @@
 //! ```
 
 mod codegen;
-pub mod convex;
+mod extract;
 pub mod errors;
+pub(crate) mod types;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use codegen::generate_code;
-use convex::{create_functions_ast, create_schema_ast, extract_schema_bindings, parse_function_ast, parse_schema_ast};
 use errors::ConvexTypeGeneratorError;
 
 /// Configuration options for the type generator.
@@ -46,6 +48,15 @@ pub struct Configuration
 
     /// Paths to Convex function files for generating function argument types
     pub function_paths: Vec<PathBuf>,
+
+    /// Map of import pattern (regex) → stub file path.
+    ///
+    /// Used to redirect project-specific helper imports to no-op stubs during
+    /// extraction. The Bun plugin intercepts matching imports and loads the
+    /// stub file instead.
+    ///
+    /// Example: `{ "helpers/result" => PathBuf::from("convex/helpers/result_stub.ts") }`
+    pub helper_stubs: HashMap<String, PathBuf>,
 }
 
 impl Default for Configuration
@@ -56,6 +67,7 @@ impl Default for Configuration
             schema_path: PathBuf::from("convex/schema.ts"),
             out_file: "src/convex_types.rs".to_string(),
             function_paths: Vec::new(),
+            helper_stubs: HashMap::new(),
         }
     }
 }
@@ -72,31 +84,22 @@ impl Default for Configuration
 /// # Errors
 /// This function can fail for several reasons:
 /// * Schema file not found
-/// * Invalid schema structure
-/// * IO errors when reading/writing files
-/// * Parse errors in schema or function files
+/// * `bun` binary not found in PATH
+/// * Bun extractor script fails
+/// * IO errors when writing the output file
 pub fn generate(config: Configuration) -> Result<(), ConvexTypeGeneratorError>
 {
     if !config.schema_path.exists() {
         return Err(ConvexTypeGeneratorError::MissingSchemaFile);
     }
 
-    let schema_path = config
-        .schema_path
-        .canonicalize()
-        .map_err(|e| ConvexTypeGeneratorError::IOError {
-            file: config.schema_path.to_string_lossy().to_string(),
-            error: e,
-        })?;
+    let (schema, functions) = extract::extract(
+        &config.schema_path,
+        &config.function_paths,
+        &config.helper_stubs,
+    )?;
 
-    let schema_ast = create_schema_ast(schema_path)?;
-    let functions_ast = create_functions_ast(config.function_paths)?;
-
-    let schema_bindings = extract_schema_bindings(&schema_ast)?;
-    let parsed_schema = parse_schema_ast(schema_ast)?;
-    let parsed_functions = parse_function_ast(functions_ast, &schema_bindings)?;
-
-    generate_code(&config.out_file, (parsed_schema, parsed_functions))?;
+    generate_code(&config.out_file, (schema, functions))?;
 
     Ok(())
 }

@@ -18,6 +18,20 @@ fn setup_test_env(
 
     fs::write(&schema_path, schema_content).expect("Failed to write test schema");
 
+    // Create _generated/ stubs so function files can import from "./_generated/server"
+    let generated_dir = temp_dir.path().join("_generated");
+    fs::create_dir_all(&generated_dir).expect("Failed to create _generated dir");
+    fs::write(
+        generated_dir.join("server.ts"),
+        r#"export { query, mutation, action, internalQuery, internalMutation, internalAction, httpAction } from "convex/server";"#,
+    )
+    .expect("Failed to write _generated/server stub");
+    fs::write(
+        generated_dir.join("api.ts"),
+        r#"export { anyApi as api, anyApi as internal } from "convex/server";"#,
+    )
+    .expect("Failed to write _generated/api stub");
+
     let mut function_paths = Vec::new();
     if let Some(files) = function_files {
         for (content, filename) in files {
@@ -38,6 +52,7 @@ fn generate_and_read(schema_content: &str, function_files: Option<Vec<(&str, &st
         schema_path,
         out_file: output_path.to_string_lossy().to_string(),
         function_paths,
+        helper_stubs: std::collections::HashMap::new(),
     };
     generate(config).expect("Code generation failed");
     fs::read_to_string(output_path).expect("Failed to read generated code")
@@ -384,6 +399,759 @@ fn test_nullable_union()
         code.contains("pub description: Option<String>"),
         "union(string, null) should be Option<String>"
     );
+}
+
+// -----------------------------------------------------------------------------
+// Untagged / mixed unions
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_untagged_primitive_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                value: v.union(v.string(), v.number()),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsValue"), "missing ItemsValue enum");
+    assert!(code.contains("#[serde(untagged)]"), "mixed union should be untagged");
+    assert!(code.contains("String(String)"), "missing String variant");
+    assert!(code.contains("Number(f64)"), "missing Number variant");
+    assert!(!code.contains("Copy"), "mixed union should NOT derive Copy");
+}
+
+#[test]
+fn test_untagged_three_primitives()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                val: v.union(v.string(), v.number(), v.boolean()),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsVal"), "missing ItemsVal enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged");
+    assert!(code.contains("String(String)"), "missing String variant");
+    assert!(code.contains("Number(f64)"), "missing Number variant");
+    assert!(code.contains("Boolean(bool)"), "missing Boolean variant");
+}
+
+#[test]
+fn test_untagged_string_and_object()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                meta: v.union(
+                    v.string(),
+                    v.object({ key: v.string(), value: v.string() }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsMeta"), "missing ItemsMeta enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged");
+    assert!(code.contains("String(String)"), "missing String variant");
+    assert!(code.contains("Object("), "missing Object variant");
+    // The nested struct should be generated for the object variant
+    assert!(code.contains("pub key: String"), "missing key field in nested struct");
+    assert!(code.contains("pub value: String"), "missing value field in nested struct");
+}
+
+#[test]
+fn test_untagged_duplicate_object_variants()
+{
+    // Two objects without a `type` discriminator → untagged with deduped names
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                result: v.union(
+                    v.object({ ok: v.literal(true), value: v.string() }),
+                    v.object({ ok: v.literal(false), error: v.string() }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsResult"), "missing ItemsResult enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged (no 'type' discriminator)");
+    // First object variant gets "Object", second gets "Object2"
+    assert!(code.contains("Object("), "missing first Object variant");
+    assert!(code.contains("Object2("), "missing deduplicated Object2 variant");
+}
+
+#[test]
+fn test_untagged_three_objects_deduplication()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                shape: v.union(
+                    v.object({ kind: v.literal("circle"), radius: v.number() }),
+                    v.object({ kind: v.literal("rect"), width: v.number(), height: v.number() }),
+                    v.object({ kind: v.literal("point") }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    // These are NOT tagged (discriminator is "kind", not "type")
+    assert!(code.contains("pub enum ItemsShape"), "missing ItemsShape enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged (discriminant is 'kind' not 'type')");
+    assert!(code.contains("Object("), "missing Object variant");
+    assert!(code.contains("Object2("), "missing Object2 variant");
+    assert!(code.contains("Object3("), "missing Object3 variant");
+}
+
+// -----------------------------------------------------------------------------
+// Nullable union edge cases
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_nullable_object_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                settings: v.union(
+                    v.object({ theme: v.string(), lang: v.string() }),
+                    v.null(),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    // Should collapse to Option<T> with a generated struct for the object
+    assert!(
+        code.contains("pub settings: Option<ItemsSettings>"),
+        "union(object, null) should be Option<ItemsSettings>"
+    );
+    assert!(code.contains("pub struct ItemsSettings"), "missing ItemsSettings struct");
+    assert!(code.contains("pub theme: String"), "missing theme field");
+    assert!(code.contains("pub lang: String"), "missing lang field");
+}
+
+#[test]
+fn test_nullable_array_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                tags: v.union(v.array(v.string()), v.null()),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub tags: Option<Vec<String>>"),
+        "union(array(string), null) should be Option<Vec<String>>"
+    );
+}
+
+#[test]
+fn test_multi_type_with_null_not_nullable()
+{
+    // union(string, number, null) has 2 non-null variants → NOT a nullable pattern
+    // Falls through to mixed untagged enum
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                val: v.union(v.string(), v.number(), v.null()),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    // Should be an enum, NOT Option<T>
+    assert!(code.contains("pub enum ItemsVal"), "should generate an enum for 3-variant union");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged");
+    assert!(!code.contains("Option<"), "multi-type + null should NOT collapse to Option");
+}
+
+// -----------------------------------------------------------------------------
+// Tagged union edge cases
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_tagged_union_unit_variants_only()
+{
+    // All variants are objects with type discriminator but no extra fields
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                status: v.union(
+                    v.object({ type: v.literal("pending") }),
+                    v.object({ type: v.literal("active") }),
+                    v.object({ type: v.literal("closed") }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsStatus"), "missing ItemsStatus enum");
+    assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
+    // All unit variants (no braces)
+    assert!(code.contains("    Pending,"), "missing Pending unit variant");
+    assert!(code.contains("    Active,"), "missing Active unit variant");
+    assert!(code.contains("    Closed,"), "missing Closed unit variant");
+    assert!(!code.contains("Pending {"), "unit variant should NOT have braces");
+}
+
+#[test]
+fn test_tagged_union_with_nested_object()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            events: defineTable({
+                event: v.union(
+                    v.object({
+                        type: v.literal("message"),
+                        payload: v.object({ text: v.string(), sender: v.string() }),
+                    }),
+                    v.object({
+                        type: v.literal("ping"),
+                    }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
+    assert!(code.contains("Message {"), "missing Message variant");
+    assert!(code.contains("Ping"), "missing Ping variant");
+    // Nested struct for the payload object
+    assert!(
+        code.contains("pub struct EventsEventMessagePayload")
+            || code.contains("payload: EventsEventMessagePayload"),
+        "should generate nested struct for Message payload"
+    );
+}
+
+#[test]
+fn test_tagged_union_with_nested_union()
+{
+    // A tagged union where one variant has a field that is itself a literal union
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            events: defineTable({
+                action: v.union(
+                    v.object({
+                        type: v.literal("reaction"),
+                        emoji: v.union(v.literal("thumbsUp"), v.literal("heart"), v.literal("fire")),
+                    }),
+                    v.object({ type: v.literal("view") }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("#[serde(tag = \"type\")]"), "outer should be tagged");
+    assert!(code.contains("Reaction {"), "missing Reaction variant");
+    assert!(code.contains("View"), "missing View variant");
+    // Inner literal union should be a Copy enum
+    assert!(code.contains("ThumbsUp"), "missing ThumbsUp literal variant");
+    assert!(code.contains("Heart"), "missing Heart literal variant");
+    assert!(code.contains("Fire"), "missing Fire literal variant");
+}
+
+// -----------------------------------------------------------------------------
+// Literal union edge cases
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_literal_union_serde_rename()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                kind: v.union(
+                    v.literal("my_item"),
+                    v.literal("yourItem"),
+                    v.literal("OurItem"),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsKind"), "missing ItemsKind enum");
+    assert!(code.contains("Copy"), "literal union should derive Copy");
+    // snake_case → PascalCase needs rename
+    assert!(code.contains("#[serde(rename = \"my_item\")]"), "should rename my_item to PascalCase");
+    assert!(code.contains("MyItem"), "missing MyItem variant");
+    // camelCase → PascalCase needs rename
+    assert!(code.contains("#[serde(rename = \"yourItem\")]"), "should rename yourItem");
+    assert!(code.contains("YourItem"), "missing YourItem variant");
+    // Already PascalCase → no rename needed
+    assert!(code.contains("OurItem"), "missing OurItem variant");
+}
+
+#[test]
+fn test_literal_union_two_variants()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            flags: defineTable({
+                toggle: v.union(v.literal("on"), v.literal("off")),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum FlagsToggle"), "missing FlagsToggle enum");
+    assert!(code.contains("Copy"), "literal enum should derive Copy");
+    assert!(code.contains("On"), "missing On variant");
+    assert!(code.contains("Off"), "missing Off variant");
+}
+
+// -----------------------------------------------------------------------------
+// Nested / compound union patterns
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_array_of_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            logs: defineTable({
+                entries: v.array(v.union(
+                    v.literal("info"),
+                    v.literal("warn"),
+                    v.literal("error"),
+                )),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub entries: Vec<LogsEntries>"), "should be Vec<LogsEntries>");
+    assert!(code.contains("pub enum LogsEntries"), "missing LogsEntries enum");
+    assert!(code.contains("Copy"), "literal union should derive Copy");
+    assert!(code.contains("Info"), "missing Info variant");
+    assert!(code.contains("Warn"), "missing Warn variant");
+}
+
+#[test]
+fn test_optional_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                priority: v.optional(v.union(
+                    v.literal("low"),
+                    v.literal("medium"),
+                    v.literal("high"),
+                )),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub priority: Option<ItemsPriority>"),
+        "optional union should be Option<EnumType>"
+    );
+    assert!(code.contains("pub enum ItemsPriority"), "missing ItemsPriority enum");
+    assert!(code.contains("Low"), "missing Low variant");
+    assert!(code.contains("Medium"), "missing Medium variant");
+    assert!(code.contains("High"), "missing High variant");
+}
+
+#[test]
+fn test_array_of_tagged_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            docs: defineTable({
+                blocks: v.array(v.union(
+                    v.object({ type: v.literal("text"), content: v.string() }),
+                    v.object({ type: v.literal("image"), url: v.string(), alt: v.string() }),
+                    v.object({ type: v.literal("divider") }),
+                )),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub blocks: Vec<DocsBlocks>"), "should be Vec<DocsBlocks>");
+    assert!(code.contains("pub enum DocsBlocks"), "missing DocsBlocks enum");
+    assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
+    assert!(code.contains("Text {"), "missing Text variant");
+    assert!(code.contains("Image {"), "missing Image variant");
+    assert!(code.contains("Divider"), "missing Divider variant");
+    assert!(code.contains("content: String"), "missing content field");
+    assert!(code.contains("url: String"), "missing url field");
+    assert!(code.contains("alt: String"), "missing alt field");
+}
+
+#[test]
+fn test_optional_tagged_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            tasks: defineTable({
+                outcome: v.optional(v.union(
+                    v.object({ type: v.literal("success"), value: v.number() }),
+                    v.object({ type: v.literal("failure"), reason: v.string() }),
+                )),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub outcome: Option<TasksOutcome>"),
+        "optional tagged union should be Option<TasksOutcome>"
+    );
+    assert!(code.contains("pub enum TasksOutcome"), "missing TasksOutcome enum");
+    assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
+    assert!(code.contains("Success {"), "missing Success variant");
+    assert!(code.contains("Failure {"), "missing Failure variant");
+}
+
+#[test]
+fn test_union_of_arrays()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                data: v.union(
+                    v.array(v.string()),
+                    v.array(v.number()),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub enum ItemsData"), "missing ItemsData enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged");
+    // Both variants wrap an array type
+    assert!(code.contains("Vec<String>"), "missing Vec<String> variant");
+    assert!(code.contains("Vec<f64>"), "missing Vec<f64> variant");
+}
+
+#[test]
+fn test_union_in_record_value()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            configs: defineTable({
+                settings: v.record(v.string(), v.union(v.string(), v.number())),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(code.contains("pub settings: std::collections::HashMap<String,"), "should be a HashMap");
+    // The value type should be a generated enum
+    assert!(
+        code.contains("pub enum ConfigsSettings") || code.contains("pub enum ConfigsSettingsValue"),
+        "should generate an enum for the record value union"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Union types in function args and returns
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_function_arg_literal_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const update = mutation({
+                args: {
+                    status: v.union(
+                        v.literal("active"),
+                        v.literal("paused"),
+                        v.literal("stopped"),
+                    ),
+                },
+                returns: v.null(),
+                handler: async (ctx, args) => {},
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(code.contains("pub enum ItemsUpdateStatus"), "missing ItemsUpdateStatus enum");
+    assert!(code.contains("Copy"), "literal union in args should derive Copy");
+    assert!(code.contains("Active"), "missing Active variant");
+    assert!(code.contains("Paused"), "missing Paused variant");
+    assert!(code.contains("Stopped"), "missing Stopped variant");
+}
+
+#[test]
+fn test_function_arg_untagged_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const update = mutation({
+                args: {
+                    value: v.union(v.string(), v.number()),
+                },
+                returns: v.null(),
+                handler: async (ctx, args) => {},
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(code.contains("pub enum ItemsUpdateValue"), "missing ItemsUpdateValue enum");
+    assert!(code.contains("#[serde(untagged)]"), "should be untagged");
+    assert!(code.contains("String(String)"), "missing String variant");
+    assert!(code.contains("Number(f64)"), "missing Number variant");
+}
+
+#[test]
+fn test_function_return_tagged_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { query } from "./_generated/server";
+
+            export const getStatus = query({
+                args: {},
+                returns: v.union(
+                    v.object({ type: v.literal("online"), since: v.number() }),
+                    v.object({ type: v.literal("offline") }),
+                ),
+                handler: async (ctx) => {
+                    return { type: "online", since: Date.now() };
+                },
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(code.contains("pub enum ItemsGetStatusReturn"), "missing ItemsGetStatusReturn enum");
+    assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
+    assert!(code.contains("Online {"), "missing Online variant");
+    assert!(code.contains("Offline"), "missing Offline variant");
+    assert!(code.contains("since: f64"), "missing since field");
+}
+
+#[test]
+fn test_function_return_literal_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const process = mutation({
+                args: { name: v.string() },
+                returns: v.union(
+                    v.literal("created"),
+                    v.literal("updated"),
+                    v.literal("skipped"),
+                ),
+                handler: async (ctx, args) => { return "created"; },
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(code.contains("pub enum ItemsProcessReturn"), "missing ItemsProcessReturn enum");
+    assert!(code.contains("Copy"), "literal return union should derive Copy");
+    assert!(code.contains("Created"), "missing Created variant");
+    assert!(code.contains("Updated"), "missing Updated variant");
+    assert!(code.contains("Skipped"), "missing Skipped variant");
+}
+
+// -----------------------------------------------------------------------------
+// Multiple tables with similar unions (verify distinct enum names)
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_multiple_tables_same_field_different_union()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            posts: defineTable({
+                status: v.union(v.literal("draft"), v.literal("published")),
+            }),
+            comments: defineTable({
+                status: v.union(v.literal("visible"), v.literal("hidden"), v.literal("flagged")),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    // Each table should get its own enum
+    assert!(code.contains("pub enum PostsStatus"), "missing PostsStatus enum");
+    assert!(code.contains("pub enum CommentsStatus"), "missing CommentsStatus enum");
+    // PostsStatus variants
+    assert!(code.contains("Draft"), "missing Draft in PostsStatus");
+    assert!(code.contains("Published"), "missing Published in PostsStatus");
+    // CommentsStatus variants
+    assert!(code.contains("Visible"), "missing Visible in CommentsStatus");
+    assert!(code.contains("Hidden"), "missing Hidden in CommentsStatus");
+    assert!(code.contains("Flagged"), "missing Flagged in CommentsStatus");
 }
 
 // =============================================================================

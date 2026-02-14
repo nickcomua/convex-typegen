@@ -43,11 +43,11 @@ fn test_empty_schema_file()
 
     let config = Configuration {
         schema_path,
+        out_file: temp_dir.path().join("types.rs").to_string_lossy().to_string(),
         ..Default::default()
     };
 
-    match generate(config) {
-        Err(ConvexTypeGeneratorError::EmptySchemaFile { .. }) => (),
-        other => panic!("Expected EmptySchemaFile error, got {:?}", other),
-    }
+    // An empty schema file is valid — it just produces no table types
+    let result = generate(config);
+    assert!(result.is_ok(), "Empty schema should succeed, got {:?}", result);
 }
