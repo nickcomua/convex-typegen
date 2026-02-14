@@ -458,10 +458,14 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
 }
 
 // =============================================================================
-// API trait generation
+// API function generation
 // =============================================================================
 
-/// Generate the typed API trait and implementation for ConvexClient.
+/// Generate the ConvexApi trait + ConvexApiClient wrapper struct.
+///
+/// The trait has `&self` methods returning `Result<T, ConvexError>`.
+/// The wrapper holds a `convex::ConvexClient` and clones it internally
+/// on each call, satisfying the SDK's `&mut self` requirement.
 fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> String
 {
     let public_functions: Vec<&ConvexFunction> = functions.iter().filter(|f| !f.type_.starts_with("internal")).collect();
@@ -471,6 +475,9 @@ fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> 
     }
 
     let mut code = String::new();
+
+    // ConvexError type (always generated)
+    code.push_str(&generate_convex_error_type());
 
     // json_to_convex_value helper (always needed for args conversion)
     code.push_str(&generate_json_to_convex_value_helper());
@@ -487,20 +494,11 @@ fn generate_api_code(functions: &[ConvexFunction], ctx: &mut CodegenContext) -> 
         code.push_str(&generate_typed_subscription_code());
     }
 
-    // Trait definition
-    code.push_str("#[allow(async_fn_in_trait)]\n");
-    code.push_str("pub trait ConvexApi {\n");
-    for func in &public_functions {
-        code.push_str(&generate_trait_method(func, ctx));
-    }
-    code.push_str("}\n\n");
+    // ConvexApiClient wrapper struct
+    code.push_str(&generate_wrapper_struct());
 
-    // Impl for ConvexClient
-    code.push_str("impl ConvexApi for convex::ConvexClient {\n");
-    for func in &public_functions {
-        code.push_str(&generate_trait_impl_method(func, ctx));
-    }
-    code.push_str("}\n\n");
+    // ConvexApi trait + impl
+    code.push_str(&generate_trait_and_impl(&public_functions, ctx));
 
     code
 }
@@ -519,68 +517,67 @@ fn get_return_type_str(func: &ConvexFunction, ctx: &mut CodegenContext) -> Optio
     })
 }
 
-/// Generate a trait method signature for a Convex function.
-fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String
+/// Generate the ConvexApiClient wrapper struct.
+fn generate_wrapper_struct() -> String
 {
-    let mut code = String::new();
-    let file_snake = to_snake_case(&func.file_name);
-    let fn_snake = to_snake_case(&func.name);
+    "/// Wrapper around `convex::ConvexClient` that provides `&self` methods.\n\
+     ///\n\
+     /// `ConvexClient::clone()` is cheap (Arc internally), so this wrapper\n\
+     /// clones on each call to satisfy the SDK's `&mut self` requirement\n\
+     /// while exposing an immutable `&self` API.\n\
+     #[derive(Clone)]\n\
+     pub struct ConvexApiClient {\n\
+     \x20   inner: convex::ConvexClient,\n\
+     }\n\
+     \n\
+     impl ConvexApiClient {\n\
+     \x20   pub fn new(client: convex::ConvexClient) -> Self {\n\
+     \x20       Self { inner: client }\n\
+     \x20   }\n\
+     \x20   pub fn into_inner(self) -> convex::ConvexClient { self.inner }\n\
+     \x20   pub fn inner(&self) -> &convex::ConvexClient { &self.inner }\n\
+     }\n\
+     \n\
+     impl From<convex::ConvexClient> for ConvexApiClient {\n\
+     \x20   fn from(client: convex::ConvexClient) -> Self {\n\
+     \x20       Self::new(client)\n\
+     \x20   }\n\
+     }\n\n"
+        .to_string()
+}
 
-    let args_part = if func.params.is_empty() {
-        String::new()
-    } else {
-        let struct_name = format!(
-            "{}{}Args",
-            capitalize_first_letter(&func.file_name),
-            capitalize_first_letter(&func.name)
-        );
-        format!(", args: {}", struct_name)
-    };
+/// Generate the ConvexApi trait definition and its impl for ConvexApiClient.
+fn generate_trait_and_impl(functions: &[&ConvexFunction], ctx: &mut CodegenContext) -> String
+{
+    let mut trait_methods = String::new();
+    let mut impl_methods = String::new();
 
-    let return_type_str = get_return_type_str(func, ctx);
-    let return_type = match &return_type_str {
-        Some(rt) => format!("anyhow::Result<{}>", rt),
-        None => "anyhow::Result<convex::FunctionResult>".to_string(),
-    };
-
-    match func.type_.as_str() {
-        "query" => {
-            // Subscribe — typed if return type available
-            let sub_return = match &return_type_str {
-                Some(rt) => format!("anyhow::Result<TypedSubscription<{}>>", rt),
-                None => "anyhow::Result<convex::QuerySubscription>".to_string(),
-            };
-            code.push_str(&format!(
-                "    async fn subscribe_{}_{}(&mut self{}) -> {};\n",
-                file_snake, fn_snake, args_part, sub_return
-            ));
-            code.push_str(&format!(
-                "    async fn query_{}_{}(&mut self{}) -> {};\n",
-                file_snake, fn_snake, args_part, return_type
-            ));
-        }
-        "mutation" => {
-            code.push_str(&format!(
-                "    async fn {}_{}(&mut self{}) -> {};\n",
-                file_snake, fn_snake, args_part, return_type
-            ));
-        }
-        "action" => {
-            code.push_str(&format!(
-                "    async fn {}_{}(&mut self{}) -> {};\n",
-                file_snake, fn_snake, args_part, return_type
-            ));
-        }
-        _ => {}
+    for func in functions {
+        let (trait_method, impl_method) = generate_trait_method(func, ctx);
+        trait_methods.push_str(&trait_method);
+        impl_methods.push_str(&impl_method);
     }
+
+    let mut code = String::new();
+
+    // Trait definition
+    code.push_str("#[allow(unused)]\n");
+    code.push_str("pub trait ConvexApi {\n");
+    code.push_str(&trait_methods);
+    code.push_str("}\n\n");
+
+    // Impl for ConvexApiClient
+    code.push_str("impl ConvexApi for ConvexApiClient {\n");
+    code.push_str(&impl_methods);
+    code.push_str("}\n\n");
 
     code
 }
 
-/// Generate a trait implementation method for a Convex function.
-fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> String
+/// Generate a single trait method signature + impl body for a ConvexFunction.
+/// Returns (trait_method, impl_method).
+fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (String, String)
 {
-    let mut code = String::new();
     let file_snake = to_snake_case(&func.file_name);
     let fn_snake = to_snake_case(&func.name);
     let function_path = format!("{}:{}", func.file_name, func.name);
@@ -598,106 +595,180 @@ fn generate_trait_impl_method(func: &ConvexFunction, ctx: &mut CodegenContext) -
     };
 
     let args_body = if has_args {
-        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\x20       let args = \
-         json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
+        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\
+         \x20       let args = json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
             .to_string()
     } else {
         "        let args = std::collections::BTreeMap::new();\n".to_string()
     };
 
     let return_type_str = get_return_type_str(func, ctx);
-    let return_type = match &return_type_str {
-        Some(rt) => format!("anyhow::Result<{}>", rt),
-        None => "anyhow::Result<convex::FunctionResult>".to_string(),
-    };
 
-    // Generate the body that unwraps FunctionResult into the typed return
+    // Helper to generate the body that unwraps FunctionResult
     let typed_return_body = |sdk_call: &str| -> String {
         match &return_type_str {
             Some(rt) if rt == "()" => {
-                // Special case: null/unit return — no deserialization needed
                 format!(
-                    "        let result = self.{sdk_call}(\"{function_path}\", args).await?;\n\x20       match result \
-                     {{\n\x20           convex::FunctionResult::Value(_) => Ok(()),\n\x20           \
-                     convex::FunctionResult::ErrorMessage(msg) => Err(anyhow::anyhow!(msg)),\n\x20           \
-                     convex::FunctionResult::ConvexError(err) => Err(anyhow::anyhow!(err.message)),\n\x20       }}\n"
+                    "        let result = self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\
+                     \x20           .map_err(ConvexError::Transport)?;\n\
+                     \x20       match result {{\n\
+                     \x20           convex::FunctionResult::Value(_) => Ok(()),\n\
+                     \x20           convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\
+                     \x20           convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server {{ message: err.message, data: convex_value_to_json(&err.data) }}),\n\
+                     \x20       }}\n"
                 )
             }
             Some(_) => {
-                // Typed return — convert Value to JSON and deserialize
                 format!(
-                    "        let result = self.{sdk_call}(\"{function_path}\", args).await?;\n\
+                    "        let result = self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\
+                     \x20           .map_err(ConvexError::Transport)?;\n\
                      \x20       match result {{\n\
                      \x20           convex::FunctionResult::Value(value) => {{\n\
                      \x20               let json = convex_value_to_json(&value);\n\
-                     \x20               Ok(serde_json::from_value(json)?)\n\
+                     \x20               serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\
                      \x20           }}\n\
-                     \x20           convex::FunctionResult::ErrorMessage(msg) => Err(anyhow::anyhow!(msg)),\n\
-                     \x20           convex::FunctionResult::ConvexError(err) => Err(anyhow::anyhow!(err.message)),\n\
+                     \x20           convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\
+                     \x20           convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server {{ message: err.message, data: convex_value_to_json(&err.data) }}),\n\
                      \x20       }}\n"
                 )
             }
             None => {
-                // No typed return — pass through FunctionResult
-                format!("        self.{sdk_call}(\"{function_path}\", args).await\n")
+                format!(
+                    "        self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\
+                     \x20           .map_err(ConvexError::Transport)\n"
+                )
             }
         }
     };
 
+    let mut trait_code = String::new();
+    let mut impl_code = String::new();
+
     match func.type_.as_str() {
         "query" => {
-            // Subscribe — typed or untyped
+            // Subscribe method
             let sub_return = match &return_type_str {
-                Some(rt) => format!("anyhow::Result<TypedSubscription<{}>>", rt),
-                None => "anyhow::Result<convex::QuerySubscription>".to_string(),
+                Some(rt) => format!("Result<TypedSubscription<{}>, ConvexError>", rt),
+                None => "Result<convex::QuerySubscription, ConvexError>".to_string(),
             };
-            code.push_str(&format!(
-                "    async fn subscribe_{file_snake}_{fn_snake}(&mut self{args_param}) -> {sub_return} {{\n"
+            let sub_name = format!("subscribe_{file_snake}_{fn_snake}");
+            trait_code.push_str(&format!(
+                "    fn {sub_name}(&self{args_param}) -> impl std::future::Future<Output = {sub_return}> + Send;\n"
             ));
-            code.push_str(&args_body);
+            impl_code.push_str(&format!(
+                "    async fn {sub_name}(&self{args_param}) -> {sub_return} {{\n"
+            ));
+            impl_code.push_str(&args_body);
             if return_type_str.is_some() {
-                code.push_str(&format!(
-                    "        let sub = self.subscribe(\"{function_path}\", args).await?;\n\x20       \
-                     Ok(TypedSubscription::new(sub))\n"
+                impl_code.push_str(&format!(
+                    "        let sub = self.inner.clone().subscribe(\"{function_path}\", args).await\n\
+                     \x20           .map_err(ConvexError::Transport)?;\n\
+                     \x20       Ok(TypedSubscription::new(sub))\n"
                 ));
             } else {
-                code.push_str(&format!("        self.subscribe(\"{function_path}\", args).await\n"));
+                impl_code.push_str(&format!(
+                    "        self.inner.clone().subscribe(\"{function_path}\", args).await\n\
+                     \x20           .map_err(ConvexError::Transport)\n"
+                ));
             }
-            code.push_str("    }\n");
+            impl_code.push_str("    }\n\n");
 
-            // Query — typed if available
-            code.push_str(&format!(
-                "    async fn query_{file_snake}_{fn_snake}(&mut self{args_param}) -> {return_type} {{\n"
+            // Query method
+            let return_type = match &return_type_str {
+                Some(rt) => format!("Result<{}, ConvexError>", rt),
+                None => "Result<convex::FunctionResult, ConvexError>".to_string(),
+            };
+            let query_name = format!("query_{file_snake}_{fn_snake}");
+            trait_code.push_str(&format!(
+                "    fn {query_name}(&self{args_param}) -> impl std::future::Future<Output = {return_type}> + Send;\n"
             ));
-            code.push_str(&args_body);
-            code.push_str(&typed_return_body("query"));
-            code.push_str("    }\n");
+            impl_code.push_str(&format!(
+                "    async fn {query_name}(&self{args_param}) -> {return_type} {{\n"
+            ));
+            impl_code.push_str(&args_body);
+            impl_code.push_str(&typed_return_body("query"));
+            impl_code.push_str("    }\n\n");
         }
         "mutation" => {
-            code.push_str(&format!(
-                "    async fn {file_snake}_{fn_snake}(&mut self{args_param}) -> {return_type} {{\n"
+            let return_type = match &return_type_str {
+                Some(rt) => format!("Result<{}, ConvexError>", rt),
+                None => "Result<convex::FunctionResult, ConvexError>".to_string(),
+            };
+            let method_name = format!("{file_snake}_{fn_snake}");
+            trait_code.push_str(&format!(
+                "    fn {method_name}(&self{args_param}) -> impl std::future::Future<Output = {return_type}> + Send;\n"
             ));
-            code.push_str(&args_body);
-            code.push_str(&typed_return_body("mutation"));
-            code.push_str("    }\n");
+            impl_code.push_str(&format!(
+                "    async fn {method_name}(&self{args_param}) -> {return_type} {{\n"
+            ));
+            impl_code.push_str(&args_body);
+            impl_code.push_str(&typed_return_body("mutation"));
+            impl_code.push_str("    }\n\n");
         }
         "action" => {
-            code.push_str(&format!(
-                "    async fn {file_snake}_{fn_snake}(&mut self{args_param}) -> {return_type} {{\n"
+            let return_type = match &return_type_str {
+                Some(rt) => format!("Result<{}, ConvexError>", rt),
+                None => "Result<convex::FunctionResult, ConvexError>".to_string(),
+            };
+            let method_name = format!("{file_snake}_{fn_snake}");
+            trait_code.push_str(&format!(
+                "    fn {method_name}(&self{args_param}) -> impl std::future::Future<Output = {return_type}> + Send;\n"
             ));
-            code.push_str(&args_body);
-            code.push_str(&typed_return_body("action"));
-            code.push_str("    }\n");
+            impl_code.push_str(&format!(
+                "    async fn {method_name}(&self{args_param}) -> {return_type} {{\n"
+            ));
+            impl_code.push_str(&args_body);
+            impl_code.push_str(&typed_return_body("action"));
+            impl_code.push_str("    }\n\n");
         }
         _ => {}
     }
 
-    code
+    (trait_code, impl_code)
 }
 
 // =============================================================================
 // Generated helper functions
 // =============================================================================
+
+/// Generate the ConvexError enum in the output.
+fn generate_convex_error_type() -> String
+{
+    "/// Error type for typed Convex API calls.\n\
+     #[derive(Debug)]\n\
+     pub enum ConvexError {\n\
+     \x20   /// Transport/connection error from the Convex SDK.\n\
+     \x20   Transport(anyhow::Error),\n\
+     \x20   /// The Convex function returned an error message (thrown string).\n\
+     \x20   Function(String),\n\
+     \x20   /// The Convex function returned a ConvexError (thrown ConvexError object).\n\
+     \x20   Server { message: String, data: serde_json::Value },\n\
+     \x20   /// Failed to deserialize the return value into the expected Rust type.\n\
+     \x20   Deserialization(serde_json::Error),\n\
+     }\n\
+     \n\
+     impl std::fmt::Display for ConvexError {\n\
+     \x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+     \x20       match self {\n\
+     \x20           ConvexError::Transport(e) => write!(f, \"transport error: {e}\"),\n\
+     \x20           ConvexError::Function(msg) => write!(f, \"function error: {msg}\"),\n\
+     \x20           ConvexError::Server { message, .. } => write!(f, \"{message}\"),\n\
+     \x20           ConvexError::Deserialization(e) => write!(f, \"deserialization error: {e}\"),\n\
+     \x20       }\n\
+     \x20   }\n\
+     }\n\
+     \n\
+     impl std::error::Error for ConvexError {\n\
+     \x20   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {\n\
+     \x20       match self {\n\
+     \x20           ConvexError::Transport(e) => Some(e.as_ref()),\n\
+     \x20           ConvexError::Deserialization(e) => Some(e),\n\
+     \x20           _ => None,\n\
+     \x20       }\n\
+     \x20   }\n\
+     }\n\n"
+        .to_string()
+}
 
 /// Generate the json_to_convex_value helper function in the output.
 fn generate_json_to_convex_value_helper() -> String
@@ -765,7 +836,7 @@ fn generate_typed_subscription_code() -> String
      }\n\
      \n\
      impl<T: serde::de::DeserializeOwned> futures_core::Stream for TypedSubscription<T> {\n\
-     \x20   type Item = anyhow::Result<T>;\n\
+     \x20   type Item = Result<T, ConvexError>;\n\
      \x20   fn poll_next(\n\
      \x20       self: std::pin::Pin<&mut Self>,\n\
      \x20       cx: &mut std::task::Context<'_>,\n\
@@ -776,10 +847,10 @@ fn generate_typed_subscription_code() -> String
      \x20               let typed = match result {\n\
      \x20                   convex::FunctionResult::Value(value) => {\n\
      \x20                       let json = convex_value_to_json(&value);\n\
-     \x20                       serde_json::from_value(json).map_err(|e| anyhow::anyhow!(e))\n\
+     \x20                       serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\
      \x20                   }\n\
-     \x20                   convex::FunctionResult::ErrorMessage(msg) => Err(anyhow::anyhow!(msg)),\n\
-     \x20                   convex::FunctionResult::ConvexError(err) => Err(anyhow::anyhow!(err.message)),\n\
+     \x20                   convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\
+     \x20                   convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server { message: err.message, data: convex_value_to_json(&err.data) }),\n\
      \x20               };\n\
      \x20               std::task::Poll::Ready(Some(typed))\n\
      \x20           }\n\
