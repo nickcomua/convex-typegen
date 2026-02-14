@@ -196,8 +196,9 @@ pub(crate) fn parse_schema_ast(ast: JsonValue) -> Result<ConvexSchema, ConvexTyp
                         details: "Invalid column name".to_string(),
                     })?;
 
-            // Resolve identifier references (e.g. `status: clientStatus`)
-            let resolved_prop = resolve_column_prop(column_prop, &bindings);
+            // Resolve identifier references recursively (e.g. `status: clientStatus`
+            // or nested: `v.optional(mediaSettingsValidator)`)
+            let resolved_prop = resolve_deep(column_prop, &bindings, 0);
 
             // Get column type by looking at the property chain
             let mut context = TypeContext::new(context.to_string());
@@ -234,13 +235,16 @@ pub fn extract_schema_bindings(ast: &JsonValue) -> Result<HashMap<String, JsonVa
     Ok(collect_top_level_bindings(body))
 }
 
+/// Maximum recursion depth for resolving identifier references.
+/// Prevents infinite loops from accidental cycles in cross-file bindings.
+const MAX_RESOLVE_DEPTH: usize = 20;
+
 /// Recursively resolve all Identifier nodes in an AST tree using the provided bindings.
 ///
 /// This handles nested references like `clientDoc` containing `clientStatus`.
-/// A depth limit of 20 prevents infinite loops from accidental cycles.
 fn resolve_deep(node: &JsonValue, bindings: &HashMap<String, JsonValue>, depth: usize) -> JsonValue
 {
-    if depth > 20 {
+    if depth > MAX_RESOLVE_DEPTH {
         return node.clone();
     }
 
@@ -334,27 +338,6 @@ fn collect_top_level_bindings(body: &[JsonValue]) -> HashMap<String, JsonValue>
     }
 
     bindings
-}
-
-/// If a column's value is an Identifier (reference to a const), resolve it
-/// by substituting the referenced value from bindings.
-fn resolve_column_prop(column_prop: &JsonValue, bindings: &HashMap<String, JsonValue>) -> JsonValue
-{
-    let value = &column_prop["value"];
-
-    // Check if the value is a simple Identifier reference
-    if value["type"].as_str() == Some("Identifier") {
-        if let Some(name) = value["name"].as_str() {
-            if let Some(resolved) = bindings.get(name) {
-                // Return a new prop with the resolved value
-                let mut prop = column_prop.clone();
-                prop["value"] = resolved.clone();
-                return prop;
-            }
-        }
-    }
-
-    column_prop.clone()
 }
 
 /// Helper function to find the defineSchema call in the AST
@@ -651,27 +634,15 @@ fn extract_function_params(
                                 })?;
 
                         // Get parameter type using the same extraction logic as schema.
-                        // Try to resolve identifiers from schema bindings first,
-                        // fall back to serde_json::Value only if unresolvable.
-                        let param_type = if arg_prop["value"]["type"].as_str() == Some("Identifier") {
-                            if let Some(name) = arg_prop["value"]["name"].as_str() {
-                                if let Some(resolved) = schema_bindings.get(name) {
-                                    let resolved_value = resolve_deep(resolved, schema_bindings, 0);
-                                    let resolved_prop = json!({
-                                        "key": arg_prop["key"].clone(),
-                                        "value": resolved_value,
-                                    });
-                                    let mut context = TypeContext::new(format!("function_{}", param_name));
-                                    extract_column_type(&resolved_prop, &mut context)?
-                                } else {
-                                    json!({ "type": "any" })
-                                }
-                            } else {
-                                json!({ "type": "any" })
-                            }
+                        // Resolve all identifier references (including nested ones
+                        // like `v.optional(mediaKind)`) before extracting the type.
+                        let resolved_arg = resolve_deep(arg_prop, schema_bindings, 0);
+                        let param_type = if resolved_arg["value"]["type"].as_str() == Some("Identifier") {
+                            // Top-level identifier that couldn't be resolved — fall back to any
+                            json!({ "type": "any" })
                         } else {
                             let mut context = TypeContext::new(format!("function_{}", param_name));
-                            extract_column_type(arg_prop, &mut context)?
+                            extract_column_type(&resolved_arg, &mut context)?
                         };
 
                         params.push(ConvexFunctionParam {
@@ -701,23 +672,12 @@ fn extract_return_type(
     if let Some(properties) = config["properties"].as_array() {
         for prop in properties {
             if prop["key"]["name"].as_str() == Some("returns") {
-                // Handle Identifier (cross-file reference) → resolve from schema bindings
-                if prop["value"]["type"].as_str() == Some("Identifier") {
-                    if let Some(name) = prop["value"]["name"].as_str() {
-                        if let Some(resolved) = schema_bindings.get(name) {
-                            let resolved_value = resolve_deep(resolved, schema_bindings, 0);
-                            let resolved_prop = json!({
-                                "key": prop["key"].clone(),
-                                "value": resolved_value,
-                            });
-                            let mut context = TypeContext::new(format!("return_{}", file_name));
-                            return Ok(Some(extract_column_type(&resolved_prop, &mut context)?));
-                        }
-                    }
+                // Resolve all identifier references (including top-level and nested)
+                let resolved_prop = resolve_deep(prop, schema_bindings, 0);
+                // Fall back to any if still an unresolved identifier
+                if resolved_prop["value"]["type"].as_str() == Some("Identifier") {
                     return Ok(Some(json!({ "type": "any" })));
                 }
-                // Resolve any nested identifiers within the return type expression
-                let resolved_prop = resolve_deep(prop, schema_bindings, 0);
                 let mut context = TypeContext::new(format!("return_{}", file_name));
                 let return_type = extract_column_type(&resolved_prop, &mut context)?;
                 return Ok(Some(return_type));

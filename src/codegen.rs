@@ -104,7 +104,8 @@ use serde::{Serialize, Deserialize};
 
 /// Check if a function parameter maps to `Option<T>` in Rust.
 /// This is true for `v.optional(...)` and `v.union(..., v.null())` with exactly one non-null variant.
-fn is_optional_param(param: &crate::convex::ConvexFunctionParam) -> bool {
+fn is_optional_param(param: &crate::convex::ConvexFunctionParam) -> bool
+{
     match param.data_type["type"].as_str() {
         Some("optional") => true,
         Some("union") => {
@@ -436,7 +437,8 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
         for param in &function.params {
             if is_optional_param(param) {
                 code.push_str(&format!(
-                    "        if let Some(val) = _args.{} {{\n            map.insert(\"{}\".to_string(), serde_json::to_value(val).unwrap());\n        }}\n",
+                    "        if let Some(val) = _args.{} {{\n            map.insert(\"{}\".to_string(), \
+                     serde_json::to_value(val).unwrap());\n        }}\n",
                     param.name, param.name
                 ));
             } else {
