@@ -39,6 +39,7 @@ fn test_codegen_pipeline()
             manifest_dir.join("examples/basic/convex/games.ts"),
             manifest_dir.join("examples/basic/convex/players.ts"),
         ],
+        helper_stubs: std::collections::HashMap::new(),
     };
 
     convex_typegen::generate(config).expect("Codegen failed");
@@ -170,33 +171,42 @@ fn test_codegen_pipeline()
 
     // Typed query returns: getGame has returns: v.union(gameDoc, v.null()) → Option<GamesTable>
     assert!(
-        output.contains("fn query_games_get_game(&self) -> impl std::future::Future<Output = Result<Option<GamesTable>, ConvexError>>"),
+        output.contains(
+            "fn query_games_get_game(&self) -> impl std::future::Future<Output = Result<Option<GamesTable>, ConvexError>>"
+        ),
         "getGame should return Result<Option<GamesTable>, ConvexError>"
     );
 
     // Typed array query returns: listGames has returns: v.array(gameDoc) → Vec<GamesTable>
     assert!(
-        output.contains("fn query_games_list_games(&self) -> impl std::future::Future<Output = Result<Vec<GamesTable>, ConvexError>>"),
+        output.contains(
+            "fn query_games_list_games(&self) -> impl std::future::Future<Output = Result<Vec<GamesTable>, ConvexError>>"
+        ),
         "listGames should return Result<Vec<GamesTable>, ConvexError>"
     );
 
     // Typed subscription returns
     assert!(
         output.contains(
-            "fn subscribe_games_get_game(&self) -> impl std::future::Future<Output = Result<TypedSubscription<Option<GamesTable>>, ConvexError>>"
+            "fn subscribe_games_get_game(&self) -> impl std::future::Future<Output = \
+             Result<TypedSubscription<Option<GamesTable>>, ConvexError>>"
         ),
         "subscribe_games_get_game should return TypedSubscription<Option<GamesTable>>"
     );
     assert!(
         output.contains(
-            "fn subscribe_players_list_active(&self) -> impl std::future::Future<Output = Result<TypedSubscription<Vec<PlayersTable>>, ConvexError>>"
+            "fn subscribe_players_list_active(&self) -> impl std::future::Future<Output = \
+             Result<TypedSubscription<Vec<PlayersTable>>, ConvexError>>"
         ),
         "subscribe_players_list_active should return TypedSubscription<Vec<PlayersTable>>"
     );
 
     // Mutation typed returns: create has returns: v.id("players") → String
     assert!(
-        output.contains("fn players_create(&self, args: PlayersCreateArgs) -> impl std::future::Future<Output = Result<String, ConvexError>>"),
+        output.contains(
+            "fn players_create(&self, args: PlayersCreateArgs) -> impl std::future::Future<Output = Result<String, \
+             ConvexError>>"
+        ),
         "players_create should return Result<String, ConvexError>"
     );
 
@@ -223,10 +233,7 @@ fn test_codegen_pipeline()
     );
 
     // ConvexApi impl for ConvexApiClient
-    assert!(
-        output.contains("impl ConvexApi for ConvexApiClient"),
-        "Missing trait impl"
-    );
+    assert!(output.contains("impl ConvexApi for ConvexApiClient"), "Missing trait impl");
 
     // json_to_convex_value helper (args → convex::Value)
     assert!(

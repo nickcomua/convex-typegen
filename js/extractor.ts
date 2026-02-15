@@ -1,6 +1,8 @@
 // Extractor entry point — run with: bun run ./extractor.ts <schema> <func1> <func2> ...
 //
-// 1. Registers mock modules via build.module() to intercept Convex imports
+// 1. Registers mock modules via build.module() to intercept Convex server imports
+//    NOTE: convex/values is NOT mocked — real Convex validators are used so that
+//    .omit(), .extend(), .pick(), .partial() etc. work natively.
 // 2. Dynamically imports the schema file (populates __schema via defineSchema mock)
 // 3. Dynamically imports each function file (exports tagged with __type)
 // 4. Prints the combined result as JSON to stdout
@@ -8,25 +10,23 @@
 import { plugin } from "bun";
 import type { FunctionDef } from "./mocks/convex_server.ts";
 import * as convexServer from "./mocks/convex_server.ts";
-import * as convexValues from "./mocks/convex_values.ts";
 import * as convexApi from "./mocks/convex_api.ts";
+import { normalize } from "./mocks/normalize.ts";
 
 type Descriptor = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
-// 1. Register mock modules — intercepts `import "convex/values"` etc.
+// 1. Register mock modules — intercepts `import "convex/server"` etc.
 //    Must happen before any dynamic import() of user code.
+//
+//    convex/values is NOT mocked — real validators are used and normalized
+//    at extraction time via normalize().
 // ---------------------------------------------------------------------------
 
 plugin({
   name: "convex-typegen-mock",
   setup(build) {
-    // Core Convex packages → our mock module instances
-    build.module("convex/values", () => ({
-      exports: convexValues,
-      loader: "object",
-    }));
-
+    // Mock convex/server (defineSchema, defineTable, query, mutation, etc.)
     build.module("convex/server", () => ({
       exports: convexServer,
       loader: "object",
@@ -104,27 +104,41 @@ for (const fp of functionPaths) {
       const def = value as FunctionDef;
       const config = def.__config ?? {};
 
-      // Extract params from args descriptor.
-      // args can be either:
-      //   1. A raw record: { paramName: v.string(), ... }
-      //   2. A v.object() descriptor: { type: "object", properties: { paramName: ... } }
-      const args = config.args ?? {};
-      const argsProperties: Record<string, Descriptor> =
-        (args as Descriptor).type === "object" && (args as Descriptor).properties
-          ? ((args as Descriptor).properties as Record<string, Descriptor>)
-          : (args as Record<string, Descriptor>);
-      const params = Object.entries(argsProperties).map(
-        ([paramName, dt]) => ({
-          name: paramName,
-          data_type: dt,
-        }),
-      );
+      // Extract and normalize params from args.
+      // Since we use real convex/values, args is a real Convex validator
+      // (v.object({ ... })) — normalize() converts it to codegen format.
+      const argsRaw = config.args;
+      let params: Array<{ name: string; data_type: Descriptor }> = [];
+
+      if (argsRaw !== undefined && argsRaw !== null) {
+        const normalized = normalize(argsRaw);
+        // After normalization, should be { type: "object", properties: { ... } }
+        if (
+          normalized.type === "object" &&
+          normalized.properties &&
+          typeof normalized.properties === "object"
+        ) {
+          params = Object.entries(
+            normalized.properties as Record<string, Descriptor>,
+          ).map(([paramName, dt]) => ({
+            name: paramName,
+            data_type: dt,
+          }));
+        }
+      }
+
+      // Normalize return type if present
+      const returnsRaw = config.returns;
+      const returnType =
+        returnsRaw !== undefined && returnsRaw !== null
+          ? normalize(returnsRaw)
+          : null;
 
       functions.push({
         name: exportName,
         type: def.__type,
         params,
-        return_type: (config.returns as Descriptor) ?? null,
+        return_type: returnType,
         file_name: fileName,
       });
     }

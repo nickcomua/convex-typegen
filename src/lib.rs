@@ -25,9 +25,10 @@
 //! }
 //! ```
 
+mod bun_installer;
 mod codegen;
-mod extract;
 pub mod errors;
+mod extract;
 pub(crate) mod types;
 
 use std::collections::HashMap;
@@ -84,20 +85,16 @@ impl Default for Configuration
 /// # Errors
 /// This function can fail for several reasons:
 /// * Schema file not found
-/// * `bun` binary not found in PATH
 /// * Bun extractor script fails
 /// * IO errors when writing the output file
+/// * Network errors when downloading bun (first run only)
 pub fn generate(config: Configuration) -> Result<(), ConvexTypeGeneratorError>
 {
     if !config.schema_path.exists() {
         return Err(ConvexTypeGeneratorError::MissingSchemaFile);
     }
 
-    let (schema, functions) = extract::extract(
-        &config.schema_path,
-        &config.function_paths,
-        &config.helper_stubs,
-    )?;
+    let (schema, functions) = extract::extract(&config.schema_path, &config.function_paths, &config.helper_stubs)?;
 
     generate_code(&config.out_file, (schema, functions))?;
 

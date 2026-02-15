@@ -504,7 +504,10 @@ fn test_untagged_duplicate_object_variants()
     );
 
     assert!(code.contains("pub enum ItemsResult"), "missing ItemsResult enum");
-    assert!(code.contains("#[serde(untagged)]"), "should be untagged (no 'type' discriminator)");
+    assert!(
+        code.contains("#[serde(untagged)]"),
+        "should be untagged (no 'type' discriminator)"
+    );
     // First object variant gets "Object", second gets "Object2"
     assert!(code.contains("Object("), "missing first Object variant");
     assert!(code.contains("Object2("), "missing deduplicated Object2 variant");
@@ -533,7 +536,10 @@ fn test_untagged_three_objects_deduplication()
 
     // These are NOT tagged (discriminator is "kind", not "type")
     assert!(code.contains("pub enum ItemsShape"), "missing ItemsShape enum");
-    assert!(code.contains("#[serde(untagged)]"), "should be untagged (discriminant is 'kind' not 'type')");
+    assert!(
+        code.contains("#[serde(untagged)]"),
+        "should be untagged (discriminant is 'kind' not 'type')"
+    );
     assert!(code.contains("Object("), "missing Object variant");
     assert!(code.contains("Object2("), "missing Object2 variant");
     assert!(code.contains("Object3("), "missing Object3 variant");
@@ -616,7 +622,10 @@ fn test_multi_type_with_null_not_nullable()
     );
 
     // Should be an enum, NOT Option<T>
-    assert!(code.contains("pub enum ItemsVal"), "should generate an enum for 3-variant union");
+    assert!(
+        code.contains("pub enum ItemsVal"),
+        "should generate an enum for 3-variant union"
+    );
     assert!(code.contains("#[serde(untagged)]"), "should be untagged");
     assert!(!code.contains("Option<"), "multi-type + null should NOT collapse to Option");
 }
@@ -686,8 +695,7 @@ fn test_tagged_union_with_nested_object()
     assert!(code.contains("Ping"), "missing Ping variant");
     // Nested struct for the payload object
     assert!(
-        code.contains("pub struct EventsEventMessagePayload")
-            || code.contains("payload: EventsEventMessagePayload"),
+        code.contains("pub struct EventsEventMessagePayload") || code.contains("payload: EventsEventMessagePayload"),
         "should generate nested struct for Message payload"
     );
 }
@@ -753,7 +761,10 @@ fn test_literal_union_serde_rename()
     assert!(code.contains("pub enum ItemsKind"), "missing ItemsKind enum");
     assert!(code.contains("Copy"), "literal union should derive Copy");
     // snake_case → PascalCase needs rename
-    assert!(code.contains("#[serde(rename = \"my_item\")]"), "should rename my_item to PascalCase");
+    assert!(
+        code.contains("#[serde(rename = \"my_item\")]"),
+        "should rename my_item to PascalCase"
+    );
     assert!(code.contains("MyItem"), "missing MyItem variant");
     // camelCase → PascalCase needs rename
     assert!(code.contains("#[serde(rename = \"yourItem\")]"), "should rename yourItem");
@@ -954,7 +965,10 @@ fn test_union_in_record_value()
         None,
     );
 
-    assert!(code.contains("pub settings: std::collections::HashMap<String,"), "should be a HashMap");
+    assert!(
+        code.contains("pub settings: std::collections::HashMap<String,"),
+        "should be a HashMap"
+    );
     // The value type should be a generated enum
     assert!(
         code.contains("pub enum ConfigsSettings") || code.contains("pub enum ConfigsSettingsValue"),
@@ -1073,7 +1087,10 @@ fn test_function_return_tagged_union()
         )]),
     );
 
-    assert!(code.contains("pub enum ItemsGetStatusReturn"), "missing ItemsGetStatusReturn enum");
+    assert!(
+        code.contains("pub enum ItemsGetStatusReturn"),
+        "missing ItemsGetStatusReturn enum"
+    );
     assert!(code.contains("#[serde(tag = \"type\")]"), "should be tagged");
     assert!(code.contains("Online {"), "missing Online variant");
     assert!(code.contains("Offline"), "missing Offline variant");
@@ -1111,7 +1128,10 @@ fn test_function_return_literal_union()
         )]),
     );
 
-    assert!(code.contains("pub enum ItemsProcessReturn"), "missing ItemsProcessReturn enum");
+    assert!(
+        code.contains("pub enum ItemsProcessReturn"),
+        "missing ItemsProcessReturn enum"
+    );
     assert!(code.contains("Copy"), "literal return union should derive Copy");
     assert!(code.contains("Created"), "missing Created variant");
     assert!(code.contains("Updated"), "missing Updated variant");

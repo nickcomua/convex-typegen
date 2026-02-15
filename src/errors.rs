@@ -7,9 +7,6 @@ pub enum ConvexTypeGeneratorError
     /// The schema file could not be found at the specified path
     MissingSchemaFile,
 
-    /// The `bun` binary was not found in PATH
-    BunNotFound,
-
     /// The Bun extractor process failed or returned invalid output
     ExtractionFailed
     {
@@ -51,12 +48,6 @@ impl fmt::Display for ConvexTypeGeneratorError
     {
         match self {
             Self::MissingSchemaFile => write!(f, "Schema file not found"),
-            Self::BunNotFound => {
-                write!(
-                    f,
-                    "bun binary not found in PATH. Install bun: https://bun.sh"
-                )
-            }
             Self::ExtractionFailed { details } => {
                 write!(f, "Type extraction failed: {}", details)
             }

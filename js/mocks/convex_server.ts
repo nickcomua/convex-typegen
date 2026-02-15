@@ -1,5 +1,11 @@
 // Mock implementation of `convex/server` — captures schema and function
 // definitions so the extractor can serialize them to JSON.
+//
+// IMPORTANT: convex/values is NOT mocked — real Convex validators are used.
+// The normalize() function converts real Convex validator JSON into the
+// descriptor format that codegen.rs expects.
+
+import { normalize } from "./normalize.ts";
 
 type Descriptor = Record<string, unknown>;
 
@@ -16,12 +22,12 @@ export const __schema: { tables: TableDef[] } = { tables: [] };
 
 // Table builder — supports chainable .index() / .searchIndex() (ignored)
 interface TableBuilder {
-  _validator: Descriptor;
+  _validator: unknown;
   index: (...args: unknown[]) => TableBuilder;
   searchIndex: (...args: unknown[]) => TableBuilder;
 }
 
-export function defineTable(validator: Descriptor): TableBuilder {
+export function defineTable(validator: unknown): TableBuilder {
   const builder: TableBuilder = {
     _validator: validator,
     index: () => builder,
@@ -35,19 +41,22 @@ export function defineSchema(
   _options?: unknown,
 ): typeof __schema {
   for (const [name, table] of Object.entries(tables)) {
-    // defineTable() can receive either:
-    //   1. A raw record of fields: defineTable({ name: v.string(), ... })
-    //      → _validator = { name: { type: "string" }, ... }
-    //   2. A v.object() descriptor: defineTable(v.object({ name: v.string() }))
-    //      → _validator = { type: "object", properties: { name: { type: "string" } } }
-    const validator = table._validator ?? {};
+    // Normalize the validator into codegen-compatible descriptors.
+    // The validator can be:
+    //   1. A real Convex v.object() validator (has kind: "object", fields: {...})
+    //   2. A raw record of field→validator: { name: v.string(), ... }
+    //   3. An already-normalized mock descriptor (has type: "object", properties)
+    const normalized = normalize(table._validator);
+
+    // Extract properties from the normalized object descriptor
     const properties: Record<string, Descriptor> =
-      validator.type === "object" && validator.properties
-        ? (validator.properties as Record<string, Descriptor>)
-        : (validator as Record<string, Descriptor>);
+      normalized.type === "object" && normalized.properties
+        ? (normalized.properties as Record<string, Descriptor>)
+        : {};
+
     const columns = Object.entries(properties).map(([fieldName, dt]) => ({
       name: fieldName,
-      data_type: dt,
+      data_type: dt as Descriptor,
     }));
     __schema.tables.push({ name, columns });
   }
@@ -61,8 +70,8 @@ export function defineSchema(
 export interface FunctionDef {
   __type: string;
   __config: {
-    args?: Descriptor;
-    returns?: Descriptor;
+    args?: unknown;
+    returns?: unknown;
     handler?: unknown;
   };
 }
@@ -105,11 +114,12 @@ const proxyHandler: ProxyHandler<object> = {
 export const anyApi = new Proxy({}, proxyHandler);
 export const componentsGeneric = () => ({});
 
-// messages.ts and other files may use paginationOptsValidator from convex/server
+// messages.ts and other files may use paginationOptsValidator from convex/server.
+// Since we mock convex/server, we provide a codegen-compatible descriptor.
 export const paginationOptsValidator = {
   type: "object",
   properties: {
-    numItems: { type: "number" },
+    numItems: { type: "float64" },
     cursor: { type: "union", variants: [{ type: "string" }, { type: "null" }] },
   },
 };

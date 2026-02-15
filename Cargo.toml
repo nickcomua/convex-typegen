@@ -19,15 +19,19 @@ keywords = ["convex", "rust", "typegen", "database", "types"]
 # rust-version = "1.70.0"
 
 [dependencies]
-convex = "0.10.2"
-serde = { version = ">=1, <1.0.224", features = ["std", "derive"], default-features = false }
+convex = "0.10"
+serde = { version = "1", features = ["std", "derive"], default-features = false }
 serde_json = "1"
+reqwest = { version = "0.13", features = ["blocking"] }
+zip = "8.0"
+flate2 = "1.0"
+tar = "0.4"
 
 [dev-dependencies]
 tempdir = "0.3"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
-testcontainers = "0.23"
+testcontainers = "0.27"
 futures = "0.3"
 futures-core = "0.3"
 basic = { path = "examples/basic" }

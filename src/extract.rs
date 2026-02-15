@@ -8,6 +8,7 @@ use std::process::Command;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
+use crate::bun_installer;
 use crate::errors::ConvexTypeGeneratorError;
 use crate::types::{ConvexColumn, ConvexFunction, ConvexFunctionParam, ConvexSchema, ConvexTable};
 
@@ -79,18 +80,20 @@ pub(crate) fn extract(
     let extractor = js_dir.join("extractor.ts");
 
     // Serialize helper stubs as JSON for the Bun plugin
-    let stubs_json =
-        serde_json::to_string(helper_stubs).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
-            details: format!("Failed to serialize helper stubs: {e}"),
-        })?;
+    let stubs_json = serde_json::to_string(helper_stubs).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+        details: format!("Failed to serialize helper stubs: {e}"),
+    })?;
 
     let schema_abs = schema_path.canonicalize().map_err(|e| ConvexTypeGeneratorError::IOError {
         file: schema_path.display().to_string(),
         error: e,
     })?;
 
+    // Get or download the bun binary
+    let bun_path = bun_installer::get_bun_path()?;
+
     // The extractor registers its own plugin via Bun.plugin() — no --preload needed
-    let mut cmd = Command::new("bun");
+    let mut cmd = Command::new(&bun_path);
     cmd.arg("run")
         .arg(&extractor)
         .arg(&schema_abs)
@@ -104,14 +107,8 @@ pub(crate) fn extract(
         cmd.arg(abs);
     }
 
-    let output = cmd.output().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ConvexTypeGeneratorError::BunNotFound
-        } else {
-            ConvexTypeGeneratorError::ExtractionFailed {
-                details: format!("Failed to spawn bun: {e}"),
-            }
-        }
+    let output = cmd.output().map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+        details: format!("Failed to spawn bun ({}): {e}", bun_path.display()),
     })?;
 
     if !output.status.success() {
@@ -134,7 +131,14 @@ pub(crate) fn extract(
             .into_iter()
             .map(|t| ConvexTable {
                 name: t.name,
-                columns: t.columns.into_iter().map(|c| ConvexColumn { name: c.name, data_type: c.data_type }).collect(),
+                columns: t
+                    .columns
+                    .into_iter()
+                    .map(|c| ConvexColumn {
+                        name: c.name,
+                        data_type: c.data_type,
+                    })
+                    .collect(),
             })
             .collect(),
     };

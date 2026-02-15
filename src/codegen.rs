@@ -3,8 +3,8 @@ use std::io::{Seek, SeekFrom, Write};
 
 use serde_json::Value as JsonValue;
 
-use crate::types::{ConvexFunction, ConvexFunctions, ConvexSchema, ConvexTable};
 use crate::errors::ConvexTypeGeneratorError;
+use crate::types::{ConvexFunction, ConvexFunctions, ConvexSchema, ConvexTable};
 
 // =============================================================================
 // CodegenContext — accumulates inline struct/enum definitions during generation
@@ -110,7 +110,10 @@ fn is_optional_param(param: &crate::types::ConvexFunctionParam) -> bool
         Some("optional") => true,
         Some("union") => {
             if let Some(variants) = param.data_type["variants"].as_array() {
-                let null_count = variants.iter().filter(|variant| variant["type"].as_str() == Some("null")).count();
+                let null_count = variants
+                    .iter()
+                    .filter(|variant| variant["type"].as_str() == Some("null"))
+                    .count();
                 let non_null_count = variants.len() - null_count;
                 null_count == 1 && non_null_count == 1
             } else {
@@ -303,6 +306,11 @@ fn generate_tagged_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
             let tag = props.get("type").and_then(|t| t["value"].as_str()).unwrap_or("Unknown");
 
             let variant_name = to_pascal_case(tag);
+
+            // Rename if pascal-cased name differs from the original tag
+            if variant_name != tag {
+                code.push_str(&format!("    #[serde(rename = \"{}\")]\n", tag));
+            }
 
             // Collect non-`type` fields
             let fields: Vec<(&String, &JsonValue)> = props.iter().filter(|(k, _)| k.as_str() != "type").collect();
@@ -622,8 +630,8 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
     };
 
     let args_body = if has_args {
-        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\
-         \x20       let args = json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
+        "        let json_args: std::collections::BTreeMap<String, serde_json::Value> = args.into();\n\x20       let args = \
+         json_args.into_iter().map(|(k, v)| (k, json_to_convex_value(v))).collect();\n"
             .to_string()
     } else {
         "        let args = std::collections::BTreeMap::new();\n".to_string()
@@ -647,22 +655,20 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
             }
             Some(_) => {
                 format!(
-                    "        let result = self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\
-                     \x20           .map_err(ConvexError::Transport)?;\n\
-                     \x20       match result {{\n\
-                     \x20           convex::FunctionResult::Value(value) => {{\n\
-                     \x20               let json = convex_value_to_json(&value);\n\
-                     \x20               serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\
-                     \x20           }}\n\
-                     \x20           convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\
-                     \x20           convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server {{ message: err.message, data: convex_value_to_json(&err.data) }}),\n\
-                     \x20       }}\n"
+                    "        let result = self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\x20           \
+                     .map_err(ConvexError::Transport)?;\n\x20       match result {{\n\x20           \
+                     convex::FunctionResult::Value(value) => {{\n\x20               let json = \
+                     convex_value_to_json(&value);\n\x20               \
+                     serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\x20           }}\n\x20           \
+                     convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\x20           \
+                     convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server {{ message: err.message, data: \
+                     convex_value_to_json(&err.data) }}),\n\x20       }}\n"
                 )
             }
             None => {
                 format!(
-                    "        self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\
-                     \x20           .map_err(ConvexError::Transport)\n"
+                    "        self.inner.clone().{sdk_call}(\"{function_path}\", args).await\n\x20           \
+                     .map_err(ConvexError::Transport)\n"
                 )
             }
         }
@@ -682,20 +688,17 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
             trait_code.push_str(&format!(
                 "    fn {sub_name}(&self{args_param}) -> impl std::future::Future<Output = {sub_return}> + Send;\n"
             ));
-            impl_code.push_str(&format!(
-                "    async fn {sub_name}(&self{args_param}) -> {sub_return} {{\n"
-            ));
+            impl_code.push_str(&format!("    async fn {sub_name}(&self{args_param}) -> {sub_return} {{\n"));
             impl_code.push_str(&args_body);
             if return_type_str.is_some() {
                 impl_code.push_str(&format!(
-                    "        let sub = self.inner.clone().subscribe(\"{function_path}\", args).await\n\
-                     \x20           .map_err(ConvexError::Transport)?;\n\
-                     \x20       Ok(TypedSubscription::new(sub))\n"
+                    "        let sub = self.inner.clone().subscribe(\"{function_path}\", args).await\n\x20           \
+                     .map_err(ConvexError::Transport)?;\n\x20       Ok(TypedSubscription::new(sub))\n"
                 ));
             } else {
                 impl_code.push_str(&format!(
-                    "        self.inner.clone().subscribe(\"{function_path}\", args).await\n\
-                     \x20           .map_err(ConvexError::Transport)\n"
+                    "        self.inner.clone().subscribe(\"{function_path}\", args).await\n\x20           \
+                     .map_err(ConvexError::Transport)\n"
                 ));
             }
             impl_code.push_str("    }\n\n");
@@ -709,9 +712,7 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
             trait_code.push_str(&format!(
                 "    fn {query_name}(&self{args_param}) -> impl std::future::Future<Output = {return_type}> + Send;\n"
             ));
-            impl_code.push_str(&format!(
-                "    async fn {query_name}(&self{args_param}) -> {return_type} {{\n"
-            ));
+            impl_code.push_str(&format!("    async fn {query_name}(&self{args_param}) -> {return_type} {{\n"));
             impl_code.push_str(&args_body);
             impl_code.push_str(&typed_return_body("query"));
             impl_code.push_str("    }\n\n");
@@ -761,39 +762,19 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
 /// Generate the ConvexError enum in the output.
 fn generate_convex_error_type() -> String
 {
-    "/// Error type for typed Convex API calls.\n\
-     #[derive(Debug)]\n\
-     pub enum ConvexError {\n\
-     \x20   /// Transport/connection error from the Convex SDK.\n\
-     \x20   Transport(anyhow::Error),\n\
-     \x20   /// The Convex function returned an error message (thrown string).\n\
-     \x20   Function(String),\n\
-     \x20   /// The Convex function returned a ConvexError (thrown ConvexError object).\n\
-     \x20   Server { message: String, data: serde_json::Value },\n\
-     \x20   /// Failed to deserialize the return value into the expected Rust type.\n\
-     \x20   Deserialization(serde_json::Error),\n\
-     }\n\
-     \n\
-     impl std::fmt::Display for ConvexError {\n\
-     \x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
-     \x20       match self {\n\
-     \x20           ConvexError::Transport(e) => write!(f, \"transport error: {e}\"),\n\
-     \x20           ConvexError::Function(msg) => write!(f, \"function error: {msg}\"),\n\
-     \x20           ConvexError::Server { message, .. } => write!(f, \"{message}\"),\n\
-     \x20           ConvexError::Deserialization(e) => write!(f, \"deserialization error: {e}\"),\n\
-     \x20       }\n\
-     \x20   }\n\
-     }\n\
-     \n\
-     impl std::error::Error for ConvexError {\n\
-     \x20   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {\n\
-     \x20       match self {\n\
-     \x20           ConvexError::Transport(e) => Some(e.as_ref()),\n\
-     \x20           ConvexError::Deserialization(e) => Some(e),\n\
-     \x20           _ => None,\n\
-     \x20       }\n\
-     \x20   }\n\
-     }\n\n"
+    "/// Error type for typed Convex API calls.\n#[derive(Debug)]\npub enum ConvexError {\n\x20   /// Transport/connection \
+     error from the Convex SDK.\n\x20   Transport(anyhow::Error),\n\x20   /// The Convex function returned an error message \
+     (thrown string).\n\x20   Function(String),\n\x20   /// The Convex function returned a ConvexError (thrown ConvexError \
+     object).\n\x20   Server { message: String, data: serde_json::Value },\n\x20   /// Failed to deserialize the return \
+     value into the expected Rust type.\n\x20   Deserialization(serde_json::Error),\n}\n\nimpl std::fmt::Display for \
+     ConvexError {\n\x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\x20       match self \
+     {\n\x20           ConvexError::Transport(e) => write!(f, \"transport error: {e}\"),\n\x20           \
+     ConvexError::Function(msg) => write!(f, \"function error: {msg}\"),\n\x20           ConvexError::Server { message, .. \
+     } => write!(f, \"{message}\"),\n\x20           ConvexError::Deserialization(e) => write!(f, \"deserialization error: \
+     {e}\"),\n\x20       }\n\x20   }\n}\n\nimpl std::error::Error for ConvexError {\n\x20   fn source(&self) -> \
+     Option<&(dyn std::error::Error + 'static)> {\n\x20       match self {\n\x20           ConvexError::Transport(e) => \
+     Some(e.as_ref()),\n\x20           ConvexError::Deserialization(e) => Some(e),\n\x20           _ => None,\n\x20       \
+     }\n\x20   }\n}\n\n"
         .to_string()
 }
 
@@ -850,42 +831,23 @@ fn generate_convex_value_to_json_helper() -> String
 /// Generate the TypedSubscription wrapper struct and Stream impl.
 fn generate_typed_subscription_code() -> String
 {
-    "pub struct TypedSubscription<T> {\n\
-     \x20   inner: convex::QuerySubscription,\n\
-     \x20   _phantom: std::marker::PhantomData<fn() -> T>,\n\
-     }\n\
-     \n\
-     impl<T> TypedSubscription<T> {\n\
-     \x20   pub fn new(inner: convex::QuerySubscription) -> Self {\n\
-     \x20       Self { inner, _phantom: std::marker::PhantomData }\n\
-     \x20   }\n\
-     \x20   pub fn into_inner(self) -> convex::QuerySubscription { self.inner }\n\
-     }\n\
-     \n\
-     impl<T: serde::de::DeserializeOwned> futures_core::Stream for TypedSubscription<T> {\n\
-     \x20   type Item = Result<T, ConvexError>;\n\
-     \x20   fn poll_next(\n\
-     \x20       self: std::pin::Pin<&mut Self>,\n\
-     \x20       cx: &mut std::task::Context<'_>,\n\
-     \x20   ) -> std::task::Poll<Option<Self::Item>> {\n\
-     \x20       let this = self.get_mut();\n\
-     \x20       match std::pin::Pin::new(&mut this.inner).poll_next(cx) {\n\
-     \x20           std::task::Poll::Ready(Some(result)) => {\n\
-     \x20               let typed = match result {\n\
-     \x20                   convex::FunctionResult::Value(value) => {\n\
-     \x20                       let json = convex_value_to_json(&value);\n\
-     \x20                       serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\
-     \x20                   }\n\
-     \x20                   convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\
-     \x20                   convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server { message: err.message, data: convex_value_to_json(&err.data) }),\n\
-     \x20               };\n\
-     \x20               std::task::Poll::Ready(Some(typed))\n\
-     \x20           }\n\
-     \x20           std::task::Poll::Ready(None) => std::task::Poll::Ready(None),\n\
-     \x20           std::task::Poll::Pending => std::task::Poll::Pending,\n\
-     \x20       }\n\
-     \x20   }\n\
-     }\n\n"
+    "pub struct TypedSubscription<T> {\n\x20   inner: convex::QuerySubscription,\n\x20   _phantom: \
+     std::marker::PhantomData<fn() -> T>,\n}\n\nimpl<T> TypedSubscription<T> {\n\x20   pub fn new(inner: \
+     convex::QuerySubscription) -> Self {\n\x20       Self { inner, _phantom: std::marker::PhantomData }\n\x20   }\n\x20   \
+     pub fn into_inner(self) -> convex::QuerySubscription { self.inner }\n}\n\nimpl<T: serde::de::DeserializeOwned> \
+     futures_core::Stream for TypedSubscription<T> {\n\x20   type Item = Result<T, ConvexError>;\n\x20   fn \
+     poll_next(\n\x20       self: std::pin::Pin<&mut Self>,\n\x20       cx: &mut std::task::Context<'_>,\n\x20   ) -> \
+     std::task::Poll<Option<Self::Item>> {\n\x20       let this = self.get_mut();\n\x20       match std::pin::Pin::new(&mut \
+     this.inner).poll_next(cx) {\n\x20           std::task::Poll::Ready(Some(result)) => {\n\x20               let typed = \
+     match result {\n\x20                   convex::FunctionResult::Value(value) => {\n\x20                       let json \
+     = convex_value_to_json(&value);\n\x20                       \
+     serde_json::from_value(json).map_err(ConvexError::Deserialization)\n\x20                   }\n\x20                   \
+     convex::FunctionResult::ErrorMessage(msg) => Err(ConvexError::Function(msg)),\n\x20                   \
+     convex::FunctionResult::ConvexError(err) => Err(ConvexError::Server { message: err.message, data: \
+     convex_value_to_json(&err.data) }),\n\x20               };\n\x20               \
+     std::task::Poll::Ready(Some(typed))\n\x20           }\n\x20           std::task::Poll::Ready(None) => \
+     std::task::Poll::Ready(None),\n\x20           std::task::Poll::Pending => std::task::Poll::Pending,\n\x20       \
+     }\n\x20   }\n}\n\n"
         .to_string()
 }
 
