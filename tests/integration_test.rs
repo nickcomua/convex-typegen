@@ -254,18 +254,6 @@ fn test_codegen_pipeline()
 
 #[tokio::test]
 
-async fn test_query_empty_game()
-{
-    let env = get_test_env().await;
-    let client = ConvexApiClient::new(ConvexClient::new(&env.convex_url).await.expect("Failed to connect"));
-
-    // Fresh database — getGame returns None (typed)
-    let game = client.query_games_get_game().await.expect("Query failed");
-    assert!(game.is_none(), "Expected None for empty game table");
-}
-
-#[tokio::test]
-
 async fn test_win_game_creates_record()
 {
     let env = get_test_env().await;

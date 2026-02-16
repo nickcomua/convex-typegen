@@ -5,6 +5,9 @@
 *.md~
 *.json~
 
+# Bun
+js/bun.lockb
+
 # IDE
 .idea/
 .vscode/

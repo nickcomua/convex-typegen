@@ -23,6 +23,15 @@ const BUN_VERSION: &str = "1.2.6";
 /// Get the path to the cached bun binary, downloading it if necessary.
 pub(crate) fn get_bun_path() -> Result<PathBuf, ConvexTypeGeneratorError>
 {
+    // First, check if bun is available in PATH
+    if let Ok(output) = std::process::Command::new("bun").arg("--version").output() {
+        if output.status.success() {
+            // Use system bun if available
+            return Ok(PathBuf::from("bun"));
+        }
+    }
+
+    // Fall back to downloading bun
     let cache_dir = get_cache_dir()?;
     let bun_path = cache_dir.join(get_bun_executable_name());
 
@@ -90,9 +99,21 @@ fn download_and_install_bun(_cache_dir: &Path, target_path: &Path) -> Result<(),
 
     eprintln!("Downloading bun {BUN_VERSION}...");
 
-    let response = reqwest::blocking::get(&download_url).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
-        details: format!("Failed to download bun from {download_url}: {e}"),
-    })?;
+    // Create a client with timeout to prevent hanging
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+            details: format!("Failed to create HTTP client: {e}"),
+        })?;
+
+    let response = client
+        .get(&download_url)
+        .send()
+        .map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+            details: format!("Failed to download bun from {download_url}: {e}"),
+        })?;
 
     if !response.status().is_success() {
         return Err(ConvexTypeGeneratorError::ExtractionFailed {

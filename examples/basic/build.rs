@@ -1,4 +1,4 @@
-use convex_typegen::{generate, Configuration};
+use convex_typegen::{Configuration, generate};
 
 fn main()
 {

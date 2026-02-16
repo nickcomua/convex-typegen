@@ -58,10 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>
         }
 
         if attempts >= MAX_ATTEMPTS {
-            println!(
-                "Sorry, you've run out of attempts! The number was {}",
-                secret_number
-            );
+            println!("Sorry, you've run out of attempts! The number was {}", secret_number);
             client.games_loss_game().await?;
             break;
         }

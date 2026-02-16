@@ -1,0 +1,8 @@
+{
+  "name": "convex-typegen-extractor",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "convex": "^1.18.2"
+  }
+}

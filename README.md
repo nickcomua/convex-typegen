@@ -25,11 +25,9 @@ You also need these runtime dependencies:
 ```toml
 [dependencies]
 convex = "0.10.2"
-serde = { version = ">=1, <1.0.224", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ```
-
-> **Note:** serde must be pinned to `<1.0.224` because oxc 0.46.0 uses `serde::__private` which was removed in that version.
 
 ## Usage
 
