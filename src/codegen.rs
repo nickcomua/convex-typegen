@@ -133,6 +133,15 @@ fn is_optional_param(param: &crate::types::ConvexFunctionParam) -> bool
 /// `naming_ctx` is used to name generated structs/enums (e.g. "UsersMetadata",
 /// "PhoneAuthRobotClaimAuthId"). When recursing into nested types, the context
 /// is extended with the field name.
+///
+/// Union detection chain (checked in order):
+/// 1. **Nullable**: `union(T, null)` → `Option<T>`
+/// 2. **Result**: `union(object{Ok: T}, object{Err: E})` → `Result<T, E>`
+///    Matches the `result()` helper from Convex, which produces `{Ok: T} | {Err: string}`.
+///    This maps directly to serde's externally-tagged `Result<T, E>` serialization.
+/// 3. **Tagged union**: all-object variants with a `type` literal field → `#[serde(tag = "type")]`
+/// 4. **Literal union**: all-literal variants → `enum` with string/number arms
+/// 5. **Mixed/untagged**: fallback → `#[serde(untagged)]` enum
 fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut CodegenContext) -> String
 {
     let type_str = data_type["type"].as_str().unwrap_or("unknown");
@@ -172,6 +181,9 @@ fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut C
                     if rust_name != *field_name {
                         struct_code += &format!("    #[serde(rename = \"{}\")]\n", field_name);
                     }
+                    if rust_type.starts_with("Option<") {
+                        struct_code += "    #[serde(skip_serializing_if = \"Option::is_none\")]\n";
+                    }
                     struct_code += &format!("    pub {}: {},\n", rust_name, rust_type);
                 }
                 struct_code += "}\n\n";
@@ -200,6 +212,13 @@ fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut C
                 if null_count == 1 && non_null.len() == 1 {
                     let inner = convex_type_to_rust_type(non_null[0], naming_ctx, ctx);
                     return format!("Option<{}>", inner);
+                }
+
+                // Result pattern: union(object{Ok: T}, object{Err: E}) → Result<T, E>
+                if let Some((ok_type, err_type)) = try_match_result_pattern(variants) {
+                    let value_rust = convex_type_to_rust_type(&ok_type, &format!("{naming_ctx}Value"), ctx);
+                    let error_rust = convex_type_to_rust_type(&err_type, &format!("{naming_ctx}Error"), ctx);
+                    return format!("Result<{value_rust}, {error_rust}>");
                 }
 
                 // Tagged union: all variants are objects with a `type` literal field
@@ -275,6 +294,31 @@ fn try_match_table_shape(props: &serde_json::Map<String, JsonValue>, tables: &[C
 // Union helpers
 // =============================================================================
 
+/// Detect the Result pattern: union of exactly 2 single-field objects,
+/// one with key "Ok" and one with key "Err".
+/// Matches `v.union(v.object({ Ok: T }), v.object({ Err: E }))`.
+fn try_match_result_pattern(variants: &[JsonValue]) -> Option<(JsonValue, JsonValue)> {
+    if variants.len() != 2 { return None; }
+    if !variants.iter().all(|v| v["type"].as_str() == Some("object")) { return None; }
+
+    let (mut ok_type, mut err_type) = (None, None);
+    for variant in variants {
+        let props = variant["properties"].as_object()?;
+        if props.len() != 1 { return None; }
+        if let Some(t) = props.get("Ok") {
+            ok_type = Some(t.clone());
+        } else if let Some(t) = props.get("Err") {
+            err_type = Some(t.clone());
+        } else {
+            return None;
+        }
+    }
+    match (ok_type, err_type) {
+        (Some(ok), Some(err)) => Some((ok, err)),
+        _ => None,
+    }
+}
+
 /// Check if a union is a tagged union (all variants are objects with a `type` literal field).
 fn is_tagged_union(variants: &[JsonValue]) -> bool
 {
@@ -322,6 +366,9 @@ fn generate_tagged_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
                 for (field_name, field_type) in &fields {
                     let nested_ctx = format!("{}{}{}", enum_name, variant_name, capitalize_first_letter(field_name));
                     let rust_type = convex_type_to_rust_type(field_type, &nested_ctx, ctx);
+                    if rust_type.starts_with("Option<") {
+                        code.push_str("        #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+                    }
                     code.push_str(&format!("        {}: {},\n", field_name, rust_type));
                 }
                 code.push_str("    },\n");
@@ -387,6 +434,29 @@ fn generate_simple_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
     }
 
     code.push_str("}\n\n");
+
+    // Generate Display impl for all-literal enums (e.g. typed error strings)
+    if all_literals {
+        code.push_str(&format!("impl std::fmt::Display for {} {{\n", enum_name));
+        code.push_str("    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n");
+        code.push_str("        match self {\n");
+        for variant in variants {
+            if let Some(value) = variant["value"].as_str() {
+                let variant_name = to_pascal_case(value);
+                code.push_str(&format!("            Self::{} => write!(f, \"{}\"),\n", variant_name, value));
+            } else if let Some(value) = variant["value"].as_bool() {
+                let variant_name = if value { "True" } else { "False" };
+                code.push_str(&format!("            Self::{} => write!(f, \"{}\"),\n", variant_name, value));
+            } else if let Some(value) = variant["value"].as_f64() {
+                let variant_name = format!("V{}", value.abs() as u64);
+                code.push_str(&format!("            Self::{} => write!(f, \"{}\"),\n", variant_name, value));
+            }
+        }
+        code.push_str("        }\n");
+        code.push_str("    }\n");
+        code.push_str("}\n\n");
+    }
+
     code
 }
 
@@ -418,6 +488,9 @@ fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String
         if rust_name != column.name {
             code.push_str(&format!("    #[serde(rename = \"{}\")]\n", column.name));
         }
+        if rust_type.starts_with("Option<") {
+            code.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+        }
         code.push_str(&format!("    pub {}: {},\n", rust_name, rust_type));
     }
 
@@ -447,6 +520,9 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     for param in &function.params {
         let naming_ctx = format!("{}{}{}", file_cap, fn_cap, capitalize_first_letter(&param.name));
         let rust_type = convex_type_to_rust_type(&param.data_type, &naming_ctx, ctx);
+        if rust_type.starts_with("Option<") {
+            code.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+        }
         code.push_str(&format!("    pub {}: {},\n", param.name, rust_type));
     }
 

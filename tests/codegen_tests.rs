@@ -483,9 +483,9 @@ fn test_untagged_string_and_object()
 }
 
 #[test]
-fn test_untagged_duplicate_object_variants()
+fn test_result_pattern_schema_field()
 {
-    // Two objects without a `type` discriminator → untagged with deduped names
+    // {Ok: T} | {Err: E} → Result<T, E>
     let code = generate_and_read(
         r#"
         import { defineSchema, defineTable } from "convex/server";
@@ -494,8 +494,8 @@ fn test_untagged_duplicate_object_variants()
         export default defineSchema({
             items: defineTable({
                 result: v.union(
-                    v.object({ ok: v.literal(true), value: v.string() }),
-                    v.object({ ok: v.literal(false), error: v.string() }),
+                    v.object({ Ok: v.string() }),
+                    v.object({ Err: v.string() }),
                 ),
             }),
         });
@@ -503,14 +503,72 @@ fn test_untagged_duplicate_object_variants()
         None,
     );
 
-    assert!(code.contains("pub enum ItemsResult"), "missing ItemsResult enum");
+    assert!(
+        code.contains("Result<String, String>"),
+        "result pattern should use Result<T, E>, got:\n{code}"
+    );
+    assert!(
+        !code.contains("Object2("),
+        "should NOT fall through to Object/Object2"
+    );
+}
+
+#[test]
+fn test_result_pattern_null_value()
+{
+    // result(v.null()) → Result<(), String> (most common — unit mutations)
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                result: v.union(
+                    v.object({ Ok: v.null() }),
+                    v.object({ Err: v.string() }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("Result<(), String>"),
+        "result(v.null()) should produce Result<(), String>, got:\n{code}"
+    );
+}
+
+#[test]
+fn test_result_pattern_non_matching_keys()
+{
+    // {Foo: T} | {Bar: E} should NOT match the Result pattern
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({
+                result: v.union(
+                    v.object({ Foo: v.string() }),
+                    v.object({ Bar: v.string() }),
+                ),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        !code.contains("Result<"),
+        "non-matching keys should NOT produce Result<T, E>, got:\n{code}"
+    );
     assert!(
         code.contains("#[serde(untagged)]"),
-        "should be untagged (no 'type' discriminator)"
+        "should fall through to untagged enum"
     );
-    // First object variant gets "Object", second gets "Object2"
-    assert!(code.contains("Object("), "missing first Object variant");
-    assert!(code.contains("Object2("), "missing deduplicated Object2 variant");
 }
 
 #[test]
@@ -1568,5 +1626,89 @@ fn test_nullable_union_args_skip_none_in_btreemap()
     assert!(
         code.contains(r#"if let Some(val) = _args.description {"#),
         "nullable union field should use if let Some(val)"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Result pattern as function return type
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_mutation_result_return_null()
+{
+    // result(v.null()) as mutation return type → Result<Result<(), String>, ConvexError>
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const create = mutation({
+                args: { name: v.string() },
+                returns: v.union(
+                    v.object({ Ok: v.null() }),
+                    v.object({ Err: v.string() }),
+                ),
+                handler: async (ctx, { name }) => {
+                    await ctx.db.insert("items", { name });
+                    return { Ok: null };
+                },
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(
+        code.contains("Result<Result<(), String>, ConvexError>"),
+        "result(v.null()) return should be Result<Result<(), String>, ConvexError>, got:\n{code}"
+    );
+}
+
+#[test]
+fn test_mutation_result_return_id()
+{
+    // result(v.id("items")) as mutation return type → Result<Result<String, String>, ConvexError>
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+
+        export default defineSchema({
+            items: defineTable({ name: v.string() }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { v } from "convex/values";
+            import { mutation } from "./_generated/server";
+
+            export const create = mutation({
+                args: { name: v.string() },
+                returns: v.union(
+                    v.object({ Ok: v.id("items") }),
+                    v.object({ Err: v.string() }),
+                ),
+                handler: async (ctx, { name }) => {
+                    const id = await ctx.db.insert("items", { name });
+                    return { Ok: id };
+                },
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(
+        code.contains("Result<Result<String, String>, ConvexError>"),
+        "result(v.id()) return should be Result<Result<String, String>, ConvexError>, got:\n{code}"
     );
 }
