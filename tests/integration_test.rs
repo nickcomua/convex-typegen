@@ -568,7 +568,8 @@ fn test_players_table_serde_roundtrip()
 {
     use example_types::{PlayersProfileSettingsTheme, PlayersRank, PlayersTable};
 
-    let json = serde_json::json!({
+    // Input JSON includes "avatar": null to test deserialization of null optionals
+    let input_json = serde_json::json!({
         "_id": "player1",
         "_creationTime": 1700000000000.0,
         "name": "Alice",
@@ -589,7 +590,7 @@ fn test_players_table_serde_roundtrip()
         "stats": { "gamesPlayed": 10.0, "winRate": 0.5 },
     });
 
-    let player: PlayersTable = serde_json::from_value(json.clone()).expect("Deserialize failed");
+    let player: PlayersTable = serde_json::from_value(input_json).expect("Deserialize failed");
     assert_eq!(player.id, "player1");
     assert_eq!(player.name, "Alice");
     assert_eq!(player.score, 42.0);
@@ -604,9 +605,28 @@ fn test_players_table_serde_roundtrip()
     assert_eq!(*player.stats.get("gamesPlayed").unwrap(), 10.0);
     assert_eq!(*player.stats.get("winRate").unwrap(), 0.5);
 
-    // Round-trip
+    // Round-trip: skip_serializing_if omits None fields, so avatar is absent
+    let expected_json = serde_json::json!({
+        "_id": "player1",
+        "_creationTime": 1700000000000.0,
+        "name": "Alice",
+        "score": 42.0,
+        "isActive": true,
+        "profile": {
+            "bio": "hello",
+            "settings": {
+                "theme": "dark",
+                "notifications": true,
+            },
+        },
+        "rank": "gold",
+        "achievements": [
+            { "name": "First Win", "unlockedAt": 1700000001000.0 },
+        ],
+        "stats": { "gamesPlayed": 10.0, "winRate": 0.5 },
+    });
     let serialized = serde_json::to_value(&player).expect("Serialize failed");
-    assert_eq!(serialized, json);
+    assert_eq!(serialized, expected_json);
 }
 
 #[test]

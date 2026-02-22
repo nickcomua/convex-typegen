@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{thread, time::Duration};
+use std::thread;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::Value as JsonValue;

@@ -14,7 +14,8 @@
 //! - Can be added to `.gitignore` if desired
 
 use std::path::{Path, PathBuf};
-use std::{fs, io, thread, time::Duration};
+use std::time::Duration;
+use std::{fs, io, thread};
 
 use crate::errors::ConvexTypeGeneratorError;
 
@@ -81,7 +82,10 @@ fn acquire_file_lock(lock_path: &Path) -> Result<FileLockGuard, ConvexTypeGenera
         match fs::OpenOptions::new().write(true).create_new(true).open(lock_path) {
             Ok(mut file) => {
                 let _ = write!(file, "{}", std::process::id());
-                return Ok(FileLockGuard { path: lock_path.to_path_buf(), _file: file });
+                return Ok(FileLockGuard {
+                    path: lock_path.to_path_buf(),
+                    _file: file,
+                });
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 attempts += 1;
@@ -95,7 +99,10 @@ fn acquire_file_lock(lock_path: &Path) -> Result<FileLockGuard, ConvexTypeGenera
                         .map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
                             details: format!("Failed to acquire lock after timeout: {e}"),
                         })?;
-                    return Ok(FileLockGuard { path: lock_path.to_path_buf(), _file: file });
+                    return Ok(FileLockGuard {
+                        path: lock_path.to_path_buf(),
+                        _file: file,
+                    });
                 }
                 thread::sleep(Duration::from_secs(1));
             }
