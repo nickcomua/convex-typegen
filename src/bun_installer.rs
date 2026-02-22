@@ -14,13 +14,31 @@
 //! - Can be added to `.gitignore` if desired
 
 use std::path::{Path, PathBuf};
-use std::{fs, io};
+use std::{fs, io, thread, time::Duration};
 
 use crate::errors::ConvexTypeGeneratorError;
 
 const BUN_VERSION: &str = "1.2.6";
 
+/// RAII guard that removes the lock file when dropped.
+struct FileLockGuard
+{
+    path: PathBuf,
+    _file: fs::File,
+}
+
+impl Drop for FileLockGuard
+{
+    fn drop(&mut self)
+    {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 /// Get the path to the cached bun binary, downloading it if necessary.
+///
+/// Uses a file lock to prevent concurrent downloads when multiple processes
+/// or test threads try to get bun at the same time (avoids "Text file busy" errors).
 pub(crate) fn get_bun_path() -> Result<PathBuf, ConvexTypeGeneratorError>
 {
     // First, check if bun is available in PATH
@@ -35,14 +53,59 @@ pub(crate) fn get_bun_path() -> Result<PathBuf, ConvexTypeGeneratorError>
     let cache_dir = get_cache_dir()?;
     let bun_path = cache_dir.join(get_bun_executable_name());
 
+    // Use a lock file to synchronize concurrent access.
+    // The lock is held until _lock is dropped (end of this function).
+    let lock_path = cache_dir.join(".lock");
+    let _lock = acquire_file_lock(&lock_path)?;
+
     if bun_path.exists() && verify_bun_binary(&bun_path)? {
         return Ok(bun_path);
     }
 
-    // Download and install bun
+    // Download and install bun (writes to temp file, then atomically renames)
     download_and_install_bun(&cache_dir, &bun_path)?;
 
     Ok(bun_path)
+}
+
+/// Acquire an exclusive file lock, retrying with backoff.
+/// Returns a guard that removes the lock file when dropped.
+fn acquire_file_lock(lock_path: &Path) -> Result<FileLockGuard, ConvexTypeGeneratorError>
+{
+    use std::io::Write;
+
+    let mut attempts = 0;
+    let max_attempts = 60; // Up to ~60 seconds total wait
+
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(lock_path) {
+            Ok(mut file) => {
+                let _ = write!(file, "{}", std::process::id());
+                return Ok(FileLockGuard { path: lock_path.to_path_buf(), _file: file });
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                attempts += 1;
+                if attempts >= max_attempts {
+                    // Stale lock — remove and retry once
+                    let _ = fs::remove_file(lock_path);
+                    let file = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(lock_path)
+                        .map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+                            details: format!("Failed to acquire lock after timeout: {e}"),
+                        })?;
+                    return Ok(FileLockGuard { path: lock_path.to_path_buf(), _file: file });
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+            Err(e) => {
+                return Err(ConvexTypeGeneratorError::ExtractionFailed {
+                    details: format!("Failed to create lock file: {e}"),
+                });
+            }
+        }
+    }
 }
 
 /// Get the cache directory for bun binaries.
@@ -76,20 +139,31 @@ fn get_bun_executable_name() -> &'static str
 }
 
 /// Verify that the bun binary exists and is executable.
+/// Retries on "Text file busy" (ETXTBSY) which can occur if another process
+/// just finished writing the binary.
 fn verify_bun_binary(path: &Path) -> Result<bool, ConvexTypeGeneratorError>
 {
     if !path.exists() {
         return Ok(false);
     }
 
-    // Try running `bun --version` to verify it works
-    let output = std::process::Command::new(path).arg("--version").output().map_err(|e| {
-        ConvexTypeGeneratorError::ExtractionFailed {
-            details: format!("Failed to verify bun binary: {e}"),
+    for attempt in 0..5 {
+        match std::process::Command::new(path).arg("--version").output() {
+            Ok(output) => return Ok(output.status.success()),
+            Err(e) => {
+                let is_text_busy = e.raw_os_error() == Some(26); // ETXTBSY
+                if is_text_busy && attempt < 4 {
+                    thread::sleep(Duration::from_millis(200 * (attempt + 1) as u64));
+                    continue;
+                }
+                return Err(ConvexTypeGeneratorError::ExtractionFailed {
+                    details: format!("Failed to verify bun binary: {e}"),
+                });
+            }
         }
-    })?;
+    }
 
-    Ok(output.status.success())
+    Ok(false)
 }
 
 /// Download and install bun to the cache directory.
@@ -172,7 +246,9 @@ fn get_platform_info() -> Result<(&'static str, &'static str), ConvexTypeGenerat
 }
 
 /// Extract the bun binary from the downloaded archive.
-/// The archive structure is: bun-{os}-{arch}/bun (or bun.exe on Windows)
+/// Writes to a temporary file first, then atomically renames to the target path.
+/// This prevents "Text file busy" (ETXTBSY) errors when another process tries to
+/// execute the binary while it's still being written.
 fn extract_bun_from_archive(bytes: &[u8], target_path: &Path) -> Result<(), ConvexTypeGeneratorError>
 {
     let cursor = io::Cursor::new(bytes);
@@ -181,6 +257,7 @@ fn extract_bun_from_archive(bytes: &[u8], target_path: &Path) -> Result<(), Conv
     })?;
 
     let exe_name = get_bun_executable_name();
+    let temp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
 
     // Find the bun binary in the archive
     for i in 0..archive.len() {
@@ -192,28 +269,44 @@ fn extract_bun_from_archive(bytes: &[u8], target_path: &Path) -> Result<(), Conv
 
         // Look for the bun executable (usually in a subdirectory like bun-darwin-aarch64/bun)
         if name.ends_with(exe_name) && !name.contains("..") {
-            let mut outfile = fs::File::create(target_path).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
-                details: format!("Failed to create file {}: {e}", target_path.display()),
+            // Write to a temp file first to avoid ETXTBSY
+            let mut outfile = fs::File::create(&temp_path).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+                details: format!("Failed to create temp file {}: {e}", temp_path.display()),
             })?;
 
-            io::copy(&mut file, &mut outfile).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
-                details: format!("Failed to extract bun binary: {e}"),
+            io::copy(&mut file, &mut outfile).map_err(|e| {
+                let _ = fs::remove_file(&temp_path);
+                ConvexTypeGeneratorError::ExtractionFailed {
+                    details: format!("Failed to extract bun binary: {e}"),
+                }
             })?;
+
+            // Ensure all data is flushed to disk before setting permissions
+            drop(outfile);
 
             // Make executable on Unix
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(target_path)
+                let mut perms = fs::metadata(&temp_path)
                     .map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
                         details: format!("Failed to read file metadata: {e}"),
                     })?
                     .permissions();
                 perms.set_mode(0o755);
-                fs::set_permissions(target_path, perms).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
+                fs::set_permissions(&temp_path, perms).map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
                     details: format!("Failed to set executable permissions: {e}"),
                 })?;
             }
+
+            // Atomically move the temp file to the target path.
+            // This ensures other processes never see a partially-written binary.
+            fs::rename(&temp_path, target_path).map_err(|e| {
+                let _ = fs::remove_file(&temp_path);
+                ConvexTypeGeneratorError::ExtractionFailed {
+                    details: format!("Failed to rename temp file to {}: {e}", target_path.display()),
+                }
+            })?;
 
             eprintln!("Bun downloaded successfully to {}", target_path.display());
             return Ok(());

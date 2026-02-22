@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{thread, time::Duration};
 
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -107,9 +108,38 @@ pub(crate) fn extract(
         cmd.arg(abs);
     }
 
-    let output = cmd.output().map_err(|e| ConvexTypeGeneratorError::ExtractionFailed {
-        details: format!("Failed to spawn bun ({}): {e}", bun_path.display()),
-    })?;
+    // Retry on ETXTBSY ("Text file busy") which can happen if another thread
+    // just finished writing the bun binary.
+    let output = {
+        let mut last_err = None;
+        let mut result = None;
+        for attempt in 0..5u64 {
+            match cmd.output() {
+                Ok(out) => {
+                    result = Some(out);
+                    break;
+                }
+                Err(e) => {
+                    let is_text_busy = e.raw_os_error() == Some(26);
+                    if is_text_busy && attempt < 4 {
+                        thread::sleep(Duration::from_millis(200 * (attempt + 1)));
+                        last_err = Some(e);
+                        continue;
+                    }
+                    return Err(ConvexTypeGeneratorError::ExtractionFailed {
+                        details: format!("Failed to spawn bun ({}): {e}", bun_path.display()),
+                    });
+                }
+            }
+        }
+        result.ok_or_else(|| ConvexTypeGeneratorError::ExtractionFailed {
+            details: format!(
+                "Failed to spawn bun ({}) after retries: {}",
+                bun_path.display(),
+                last_err.map(|e| e.to_string()).unwrap_or_default()
+            ),
+        })?
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
