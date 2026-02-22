@@ -297,14 +297,21 @@ fn try_match_table_shape(props: &serde_json::Map<String, JsonValue>, tables: &[C
 /// Detect the Result pattern: union of exactly 2 single-field objects,
 /// one with key "Ok" and one with key "Err".
 /// Matches `v.union(v.object({ Ok: T }), v.object({ Err: E }))`.
-fn try_match_result_pattern(variants: &[JsonValue]) -> Option<(JsonValue, JsonValue)> {
-    if variants.len() != 2 { return None; }
-    if !variants.iter().all(|v| v["type"].as_str() == Some("object")) { return None; }
+fn try_match_result_pattern(variants: &[JsonValue]) -> Option<(JsonValue, JsonValue)>
+{
+    if variants.len() != 2 {
+        return None;
+    }
+    if !variants.iter().all(|v| v["type"].as_str() == Some("object")) {
+        return None;
+    }
 
     let (mut ok_type, mut err_type) = (None, None);
     for variant in variants {
         let props = variant["properties"].as_object()?;
-        if props.len() != 1 { return None; }
+        if props.len() != 1 {
+            return None;
+        }
         if let Some(t) = props.get("Ok") {
             ok_type = Some(t.clone());
         } else if let Some(t) = props.get("Err") {

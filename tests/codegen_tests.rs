@@ -507,10 +507,7 @@ fn test_result_pattern_schema_field()
         code.contains("Result<String, String>"),
         "result pattern should use Result<T, E>, got:\n{code}"
     );
-    assert!(
-        !code.contains("Object2("),
-        "should NOT fall through to Object/Object2"
-    );
+    assert!(!code.contains("Object2("), "should NOT fall through to Object/Object2");
 }
 
 #[test]
@@ -565,10 +562,7 @@ fn test_result_pattern_non_matching_keys()
         !code.contains("Result<"),
         "non-matching keys should NOT produce Result<T, E>, got:\n{code}"
     );
-    assert!(
-        code.contains("#[serde(untagged)]"),
-        "should fall through to untagged enum"
-    );
+    assert!(code.contains("#[serde(untagged)]"), "should fall through to untagged enum");
 }
 
 #[test]
