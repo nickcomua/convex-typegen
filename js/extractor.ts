@@ -89,7 +89,7 @@ interface FunctionRecord {
 const functions: FunctionRecord[] = [];
 
 for (const fp of functionPaths) {
-  const parts = fp.split("/");
+  const parts = fp.split(/[/\\]/);
   const rawName = parts[parts.length - 1] ?? fp;
   const fileName = rawName.replace(/\.ts$/, "");
 

@@ -15,7 +15,7 @@ fn test_configuration_default()
 {
     let config = Configuration::default();
     assert_eq!(config.schema_path, PathBuf::from("convex/schema.ts"));
-    assert_eq!(config.out_file, "src/convex_types.rs");
+    assert_eq!(config.out_file, PathBuf::from("src/convex_types.rs"));
     assert!(config.function_paths.is_empty());
 }
 
@@ -43,7 +43,7 @@ fn test_empty_schema_file()
 
     let config = Configuration {
         schema_path,
-        out_file: temp_dir.path().join("types.rs").to_string_lossy().to_string(),
+        out_file: temp_dir.path().join("types.rs"),
         ..Default::default()
     };
 

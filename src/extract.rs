@@ -86,10 +86,16 @@ pub(crate) fn extract(
         details: format!("Failed to serialize helper stubs: {e}"),
     })?;
 
-    let schema_abs = schema_path.canonicalize().map_err(|e| ConvexTypeGeneratorError::IOError {
-        file: schema_path.display().to_string(),
-        error: e,
-    })?;
+    let schema_abs = if schema_path.is_absolute() {
+        schema_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(schema_path))
+            .map_err(|e| ConvexTypeGeneratorError::IOError {
+                file: schema_path.display().to_string(),
+                error: e,
+            })?
+    };
 
     // Get or download the bun binary
     let bun_path = bun_installer::get_bun_path()?;
@@ -102,10 +108,16 @@ pub(crate) fn extract(
         .env("TYPEGEN_HELPER_STUBS", &stubs_json);
 
     for fp in function_paths {
-        let abs = fp.canonicalize().map_err(|e| ConvexTypeGeneratorError::IOError {
-            file: fp.display().to_string(),
-            error: e,
-        })?;
+        let abs = if fp.is_absolute() {
+            fp.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(fp))
+                .map_err(|e| ConvexTypeGeneratorError::IOError {
+                    file: fp.display().to_string(),
+                    error: e,
+                })?
+        };
         cmd.arg(abs);
     }
 

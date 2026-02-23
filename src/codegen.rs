@@ -50,7 +50,10 @@ impl<'a> CodegenContext<'a>
 // Main entry point
 // =============================================================================
 
-pub(crate) fn generate_code(path: &str, data: (ConvexSchema, ConvexFunctions)) -> Result<(), ConvexTypeGeneratorError>
+pub(crate) fn generate_code(
+    path: &std::path::Path,
+    data: (ConvexSchema, ConvexFunctions),
+) -> Result<(), ConvexTypeGeneratorError>
 {
     let mut file = std::fs::File::create(path)?;
 

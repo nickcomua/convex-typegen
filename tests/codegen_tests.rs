@@ -50,7 +50,7 @@ fn generate_and_read(schema_content: &str, function_files: Option<Vec<(&str, &st
     let (_temp_dir, schema_path, output_path, function_paths) = setup_test_env(schema_content, function_files);
     let config = Configuration {
         schema_path,
-        out_file: output_path.to_string_lossy().to_string(),
+        out_file: output_path.clone(),
         function_paths,
         helper_stubs: std::collections::HashMap::new(),
     };

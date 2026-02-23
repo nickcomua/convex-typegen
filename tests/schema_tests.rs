@@ -36,7 +36,7 @@ fn test_valid_schema()
 
     let config = Configuration {
         schema_path,
-        out_file: output_path.to_str().unwrap().to_string(),
+        out_file: output_path.clone(),
         ..Default::default()
     };
 

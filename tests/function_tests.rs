@@ -58,7 +58,7 @@ export const testQuery = query({
     let config = Configuration {
         schema_path,
         function_paths: vec![function_path],
-        out_file: temp_dir.path().join("types.rs").to_string_lossy().to_string(),
+        out_file: temp_dir.path().join("types.rs"),
         helper_stubs: std::collections::HashMap::new(),
     };
 
@@ -100,7 +100,7 @@ export default defineSchema({
     let config = Configuration {
         schema_path,
         function_paths: vec![function_path],
-        out_file: temp_dir.path().join("types.rs").to_string_lossy().to_string(),
+        out_file: temp_dir.path().join("types.rs"),
         helper_stubs: std::collections::HashMap::new(),
     };
 

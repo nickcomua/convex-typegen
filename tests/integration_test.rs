@@ -31,10 +31,7 @@ fn test_codegen_pipeline()
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = convex_typegen::Configuration {
         schema_path: manifest_dir.join("examples/basic/convex/schema.ts"),
-        out_file: std::env::temp_dir()
-            .join("convex_typegen_integration_test.rs")
-            .to_string_lossy()
-            .to_string(),
+        out_file: std::env::temp_dir().join("convex_typegen_integration_test.rs"),
         function_paths: vec![
             manifest_dir.join("examples/basic/convex/games.ts"),
             manifest_dir.join("examples/basic/convex/players.ts"),
