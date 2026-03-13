@@ -114,12 +114,15 @@ const proxyHandler: ProxyHandler<object> = {
 export const anyApi = new Proxy({}, proxyHandler);
 export const componentsGeneric = () => ({});
 
-// messages.ts and other files may use paginationOptsValidator from convex/server.
-// Since we mock convex/server, we provide a codegen-compatible descriptor.
-export const paginationOptsValidator = {
-  type: "object",
-  properties: {
-    numItems: { type: "float64" },
-    cursor: { type: "union", variants: [{ type: "string" }, { type: "null" }] },
-  },
-};
+// paginationOptsValidator must be a real Convex validator (not a plain descriptor)
+// because convex/values is NOT mocked — user code passes it into v.object() which
+// checks isConvexValidator. We import v from convex/values (not mocked) to build it.
+import { v } from "convex/values";
+export const paginationOptsValidator = v.object({
+  numItems: v.number(),
+  cursor: v.union(v.string(), v.null()),
+  endCursor: v.optional(v.union(v.string(), v.null())),
+  id: v.optional(v.number()),
+  maximumRowsRead: v.optional(v.number()),
+  maximumBytesRead: v.optional(v.number()),
+});
