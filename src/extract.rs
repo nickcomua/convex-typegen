@@ -107,6 +107,16 @@ pub(crate) fn extract(
         .arg(&schema_abs)
         .env("TYPEGEN_HELPER_STUBS", &stubs_json);
 
+    // Set NODE_PATH so bun can resolve `convex/values` (which is NOT mocked)
+    // even when the mock files live in a different location (e.g. nix store).
+    // We look for node_modules next to the schema file's directory.
+    if let Some(schema_dir) = schema_abs.parent() {
+        let node_modules = schema_dir.parent().unwrap_or(schema_dir).join("node_modules");
+        if node_modules.exists() {
+            cmd.env("NODE_PATH", &node_modules);
+        }
+    }
+
     for fp in function_paths {
         let abs = if fp.is_absolute() {
             fp.to_path_buf()
