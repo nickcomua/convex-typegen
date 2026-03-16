@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use convex_typegen::{generate, Configuration};
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 /// Set up a test environment with a schema file and optional function files.
 ///
@@ -12,7 +12,7 @@ fn setup_test_env(
     function_files: Option<Vec<(&str, &str)>>,
 ) -> (TempDir, PathBuf, PathBuf, Vec<PathBuf>)
 {
-    let temp_dir = TempDir::new("convex_codegen_test").expect("Failed to create temp directory");
+    let temp_dir = TempDir::with_prefix("convex_codegen_test").expect("Failed to create temp directory");
     let schema_path = temp_dir.path().join("schema.ts");
     let output_path = temp_dir.path().join("types.rs");
 

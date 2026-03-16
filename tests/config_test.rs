@@ -3,11 +3,11 @@ use std::path::PathBuf;
 
 use convex_typegen::errors::ConvexTypeGeneratorError;
 use convex_typegen::{generate, Configuration};
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 fn setup_test_dir() -> TempDir
 {
-    TempDir::new("convex_typegen_test").expect("Failed to create temp directory")
+    TempDir::with_prefix("convex_typegen_test").expect("Failed to create temp directory")
 }
 
 #[test]

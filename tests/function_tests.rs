@@ -1,11 +1,11 @@
 use std::fs;
 
 use convex_typegen::{generate, Configuration};
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 fn setup_test_dir() -> TempDir
 {
-    let temp_dir = TempDir::new("convex_typegen_test").expect("Failed to create temp directory");
+    let temp_dir = TempDir::with_prefix("convex_typegen_test").expect("Failed to create temp directory");
 
     // Create _generated/ stubs so function files can import from "./_generated/server"
     let generated_dir = temp_dir.path().join("_generated");
