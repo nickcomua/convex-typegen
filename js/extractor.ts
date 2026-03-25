@@ -84,6 +84,7 @@ interface FunctionRecord {
   params: Array<{ name: string; data_type: Descriptor }>;
   return_type: Descriptor | null;
   file_name: string;
+  module_path: string;
 }
 
 const functions: FunctionRecord[] = [];
@@ -92,6 +93,18 @@ for (const fp of functionPaths) {
   const parts = fp.split(/[/\\]/);
   const rawName = parts[parts.length - 1] ?? fp;
   const fileName = rawName.replace(/\.ts$/, "");
+
+  // Compute module path relative to the `convex/` directory for API routing.
+  // e.g. "/abs/path/convex/model/chats.ts" → "model/chats"
+  // Falls back to fileName for top-level files.
+  const convexIdx = parts.findIndex((p) => p === "convex");
+  const modulePath =
+    convexIdx >= 0 && convexIdx < parts.length - 1
+      ? parts
+          .slice(convexIdx + 1)
+          .join("/")
+          .replace(/\.ts$/, "")
+      : fileName;
 
   const mod = await import(fp);
 
@@ -140,6 +153,7 @@ for (const fp of functionPaths) {
         params,
         return_type: returnType,
         file_name: fileName,
+        module_path: modulePath,
       });
     }
   }

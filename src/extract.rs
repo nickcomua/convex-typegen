@@ -54,6 +54,8 @@ struct FunctionOutput
     params: Vec<ParamOutput>,
     return_type: Option<JsonValue>,
     file_name: String,
+    #[serde(default)]
+    module_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -212,6 +214,7 @@ pub(crate) fn extract(
                 .collect(),
             return_type: f.return_type,
             file_name: f.file_name,
+            module_path: f.module_path,
         })
         .collect();
 

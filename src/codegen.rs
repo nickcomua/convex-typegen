@@ -541,7 +541,8 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     // FUNCTION_PATH constant
     code.push_str(&format!("impl {} {{\n", struct_name));
     code.push_str("    pub const FUNCTION_PATH: &'static str = ");
-    code.push_str(&format!("\"{}:{}\";\n", function.file_name, function.name));
+    let module = function.module_path.as_deref().unwrap_or(&function.file_name);
+    code.push_str(&format!("\"{}:{}\";\n", module, function.name));
     code.push_str("}\n\n");
 
     // From impl for BTreeMap
@@ -701,7 +702,8 @@ fn generate_trait_method(func: &ConvexFunction, ctx: &mut CodegenContext) -> (St
 {
     let file_snake = to_snake_case(&func.file_name);
     let fn_snake = to_snake_case(&func.name);
-    let function_path = format!("{}:{}", func.file_name, func.name);
+    let module = func.module_path.as_deref().unwrap_or(&func.file_name);
+    let function_path = format!("{}:{}", module, func.name);
 
     let has_args = !func.params.is_empty();
     let args_param = if has_args {

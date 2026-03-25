@@ -51,7 +51,13 @@ pub(crate) struct ConvexFunction
     pub(crate) params: Vec<ConvexFunctionParam>,
     pub(crate) return_type: Option<JsonValue>,
     pub(crate) type_: String,
+    /// The file stem (e.g. `"chats"`) — used for Rust type/method naming.
     pub(crate) file_name: String,
+    /// The module path relative to `convex/` (e.g. `"model/chats"`) — used for
+    /// Convex API routing (`FUNCTION_PATH`). Falls back to `file_name` when absent
+    /// (backwards compatible with older extractors).
+    #[serde(default)]
+    pub(crate) module_path: Option<String>,
 }
 
 /// A parameter in a convex function.
