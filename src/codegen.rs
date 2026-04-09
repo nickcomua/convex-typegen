@@ -187,7 +187,8 @@ fn convex_type_to_rust_type(data_type: &JsonValue, naming_ctx: &str, ctx: &mut C
                     if rust_type.starts_with("Option<") {
                         struct_code += "    #[serde(skip_serializing_if = \"Option::is_none\")]\n";
                     }
-                    struct_code += &format!("    pub {}: {},\n", rust_name, rust_type);
+                    let safe_name = escape_rust_keyword(&rust_name);
+                    struct_code += &format!("    pub {}: {},\n", safe_name, rust_type);
                 }
                 struct_code += "}\n\n";
                 ctx.register_struct(&struct_name, &struct_code)
@@ -379,7 +380,8 @@ fn generate_tagged_enum(enum_name: &str, variants: &[JsonValue], ctx: &mut Codeg
                     if rust_type.starts_with("Option<") {
                         code.push_str("        #[serde(skip_serializing_if = \"Option::is_none\")]\n");
                     }
-                    code.push_str(&format!("        {}: {},\n", field_name, rust_type));
+                    let safe_field = escape_rust_keyword(field_name);
+                    code.push_str(&format!("        {}: {},\n", safe_field, rust_type));
                 }
                 code.push_str("    },\n");
             }
@@ -501,7 +503,8 @@ fn generate_table_code(table: &ConvexTable, ctx: &mut CodegenContext) -> String
         if rust_type.starts_with("Option<") {
             code.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
         }
-        code.push_str(&format!("    pub {}: {},\n", rust_name, rust_type));
+        let safe_name = escape_rust_keyword(&rust_name);
+        code.push_str(&format!("    pub {}: {},\n", safe_name, rust_type));
     }
 
     code.push_str("}\n\n");
@@ -533,7 +536,8 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
         if rust_type.starts_with("Option<") {
             code.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
         }
-        code.push_str(&format!("    pub {}: {},\n", param.name, rust_type));
+        let safe_param = escape_rust_keyword(&param.name);
+        code.push_str(&format!("    pub {}: {},\n", safe_param, rust_type));
     }
 
     code.push_str("}\n\n");
@@ -557,16 +561,17 @@ fn generate_function_code(function: &ConvexFunction, ctx: &mut CodegenContext) -
     } else {
         code.push_str("        let mut map = std::collections::BTreeMap::new();\n");
         for param in &function.params {
+            let safe_param = escape_rust_keyword(&param.name);
             if is_optional_param(param) {
                 code.push_str(&format!(
                     "        if let Some(val) = _args.{} {{\n            map.insert(\"{}\".to_string(), \
                      serde_json::to_value(val).unwrap());\n        }}\n",
-                    param.name, param.name
+                    safe_param, param.name
                 ));
             } else {
                 code.push_str(&format!(
                     "        map.insert(\"{}\".to_string(), serde_json::to_value(_args.{}).unwrap());\n",
-                    param.name, param.name
+                    param.name, safe_param
                 ));
             }
         }
@@ -982,4 +987,29 @@ fn to_snake_case(s: &str) -> String
         result.push(c.to_lowercase().next().unwrap_or(c));
     }
     result
+}
+
+/// If `name` is a Rust reserved keyword, return `r#name`; otherwise return it unchanged.
+fn escape_rust_keyword(name: &str) -> String
+{
+    // https://doc.rust-lang.org/reference/keywords.html
+    const KEYWORDS: &[&str] = &[
+        // Strict keywords
+        "as", "break", "const", "continue", "crate", "else", "enum",
+        "extern", "false", "fn", "for", "if", "impl", "in", "let",
+        "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+        "self", "Self", "static", "struct", "super", "trait", "true",
+        "type", "unsafe", "use", "where", "while",
+        // Edition 2018+ strict keywords
+        "async", "await", "dyn",
+        // Reserved for future use
+        "abstract", "become", "box", "do", "final", "macro",
+        "override", "priv", "typeof", "unsized", "virtual", "yield",
+        "try",
+    ];
+    if KEYWORDS.contains(&name) {
+        format!("r#{}", name)
+    } else {
+        name.to_string()
+    }
 }

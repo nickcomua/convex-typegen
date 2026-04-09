@@ -1706,3 +1706,126 @@ fn test_mutation_result_return_id()
         "result(v.id()) return should be Result<Result<String, String>, ConvexError>, got:\n{code}"
     );
 }
+
+// =============================================================================
+// Rust reserved keyword escaping
+// =============================================================================
+
+#[test]
+fn test_table_field_named_type()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+        export default defineSchema({
+            items: defineTable({
+                type: v.string(),
+                name: v.string(),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub r#type: String"),
+        "field named 'type' should be escaped as r#type, got:\n{code}"
+    );
+    assert!(
+        code.contains("pub name: String"),
+        "non-keyword field 'name' should remain unchanged, got:\n{code}"
+    );
+}
+
+#[test]
+fn test_table_field_named_match()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+        export default defineSchema({
+            items: defineTable({
+                match: v.float64(),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub r#match: f64"),
+        "field named 'match' should be escaped as r#match, got:\n{code}"
+    );
+}
+
+#[test]
+fn test_function_arg_named_type()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+        export default defineSchema({
+            items: defineTable({
+                name: v.string(),
+            }),
+        });
+        "#,
+        Some(vec![(
+            r#"
+            import { mutation } from "./_generated/server";
+            import { v } from "convex/values";
+            export const create = mutation({
+                args: { type: v.string(), name: v.string() },
+                handler: async (ctx, args) => {},
+            });
+            "#,
+            "items.ts",
+        )]),
+    );
+
+    assert!(
+        code.contains("pub r#type: String"),
+        "function arg named 'type' should be escaped as r#type, got:\n{code}"
+    );
+    // The BTreeMap From impl should use r#type for field access but "type" for the key string
+    assert!(
+        code.contains("_args.r#type"),
+        "From impl should access field as _args.r#type, got:\n{code}"
+    );
+    assert!(
+        code.contains("\"type\""),
+        "From impl should use \"type\" as the map key string, got:\n{code}"
+    );
+}
+
+#[test]
+fn test_inline_object_field_keyword()
+{
+    let code = generate_and_read(
+        r#"
+        import { defineSchema, defineTable } from "convex/server";
+        import { v } from "convex/values";
+        export default defineSchema({
+            items: defineTable({
+                meta: v.object({
+                    type: v.string(),
+                    ref: v.string(),
+                }),
+            }),
+        });
+        "#,
+        None,
+    );
+
+    assert!(
+        code.contains("pub r#type: String"),
+        "nested object field 'type' should be escaped as r#type, got:\n{code}"
+    );
+    assert!(
+        code.contains("pub r#ref: String"),
+        "nested object field 'ref' should be escaped as r#ref, got:\n{code}"
+    );
+}
